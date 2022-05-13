@@ -1,0 +1,7 @@
+config.yaml'
+notes.txt
+test.py
+validator.py
+venv
+.idea
+__pycache__

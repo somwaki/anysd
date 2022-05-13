@@ -1,0 +1,18 @@
+retry:
+  timeout: 120 # how long before giving up retrying and raise the exception
+  multiplier: 2 # how to generate next waiting time from current waiting time
+
+navigation:
+  back_symbol: 0
+
+db:
+    host: localhost
+    port: 3308
+    username: root
+    password: secret
+    database: myAppDB
+
+redis:
+    host: localhost
+    port: 6379
+    db: 4
