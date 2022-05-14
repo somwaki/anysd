@@ -1,13 +1,12 @@
 import enum
 import logging
+from itertools import count
 from typing import Callable, List
 
-from itertools import count
-
-from anytree import Node, RenderTree, NodeMixin
-
-from conf import config as cfg
 import redis
+from anytree import Node, NodeMixin
+
+from conf import config as cfg, FormBackError
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -72,7 +71,8 @@ class ListInput:
             return f'CON {self.title}\n {r}'
 
         else:
-            raise ValueError(f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
+            raise ValueError(
+                f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
 
     def get_item(self, idx):
         _items = [i for i in enumerate(self.items, start=1)]
@@ -80,60 +80,55 @@ class ListInput:
 
 
 class FormFlow(BaseUSSD):
-    def __init__(self, current_step, last_input, form_questions: dict, channel: Channels, step_validator: Callable,
+    def __init__(self, form_questions: dict, channel: Channels, step_validator: Callable,
                  msisdn, session_id):
 
         super().__init__(msisdn, session_id, channel)
         self.invalid_input = "CON Invalid input\n{menu}"
-        self.current_step = int(float(current_step))
-        self.previous_step = self.current_step if self.current_step >= 1 else None
-        self.last_input = last_input
         self.form_questions = form_questions
         self.step_validator = step_validator
 
-    def _validate_last_input(self):
+    def _validate_last_input(self, current_step, last_input):
         """
         validate by using if...else, for all steps in this flow
         :return:
         """
 
-        _val, _validated = self.step_validator(self.current_step, self.last_input)
+        _val, _validated = self.step_validator(current_step, last_input)
         if _val is None or not isinstance(_val, bool):
             logger.warning('Input not validated explicitly by validator function, Default value of True has been used')
             _val = True
         if _validated is not None:
-            self.last_input = _validated
+            last_input = _validated
 
         return _val
 
-    def _response(self):
+    def _response(self, current_step, last_input):
         skip_validation = False
         valid_last_input = False
 
         # we skip validation, since we are going back, we just display the menu
-        if self.last_input == self.back_symbol:
+        if last_input == self.back_symbol:
             valid_last_input = True
             skip_validation = True
-            self.current_step -= 2
+            current_step -= 2
 
         if not skip_validation:
             # validate last input.
-            valid_last_input = self._validate_last_input()
+            valid_last_input = self._validate_last_input(current_step, last_input)
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
             try:
-                resp = self.form_questions[str(self.current_step + 1)]
+                resp = self.form_questions[str(current_step + 1)]
 
             except ValueError:
                 resp = None
 
             except KeyError:
-                if self.current_step == -1:
-                    msg = "CON We'll be going back to the previous menu..."
-                    logger.warning(msg[4:])
-                    resp = msg
-                elif self.current_step == len(self.form_questions):
+                if current_step == -1:
+                    raise FormBackError('Cannot go back beyond this point')
+                elif current_step == len(self.form_questions):
                     msg = 'END Next step not specified'
                     logger.warning(msg[4:])
                     resp = msg
@@ -143,7 +138,7 @@ class FormFlow(BaseUSSD):
                     resp = msg
 
         else:
-            resp = self.invalid_input.format(menu=self.form_questions[str(self.current_step)]['menu'][4:])
+            resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'][4:])
 
         if isinstance(resp, ListInput):
             resp = resp.get_items()
@@ -153,8 +148,10 @@ class FormFlow(BaseUSSD):
                 resp['menu'] = resp['menu'].get_items()
         return resp
 
-    def get_response(self):
-        _resp = self._response()
+    def get_response(self, current_step, last_input):
+        if current_step is None:
+            current_step = 0
+        _resp = self._response(current_step, last_input)
         if isinstance(_resp, dict) and 'menu' in _resp.keys():
             message = _resp['menu']
         else:
@@ -166,11 +163,12 @@ class FormFlow(BaseUSSD):
         return message
 
 
-class UssdMenu(Node, NodeMixin):
+class NavigationMenu(Node, NodeMixin):
     _ids = count(0)
 
-    def __init__(self, name="", title: str = "", show_title: bool = True, **kwargs):
+    def __init__(self, name="", title: str = "", show_title: bool = True, next_form=None, **kwargs):
         super().__init__(name, **kwargs)
+        self.next_form = next_form
         self.title = title
         self.show_title = show_title
         self.id = next(self._ids)
@@ -179,29 +177,88 @@ class UssdMenu(Node, NodeMixin):
         self.label = self.id,
         self.menu_string = ""
         self.menu_string += "" if self.parent is None else "\n0: BACK\n00: MAIN MENU"
-        if not kwargs.get('terminal'):
-            _ = self.parent.generate_menu() if self.parent is not None else ''
-        else:
-            self.menu_string = self.title
 
         self.all_ids = next(self._ids)  # TODO: remove this after testing..
 
-        parents = kwargs.get('parents')
-        if parents:
-            if isinstance(parents, list):
-                for parent in parents:
-                    parent.children.append(self)
+    def _generate_menu(self, last_input, step=None):
+        if len(self.children) == 0 and self.next_form is not None:
+            if not isinstance(self.next_form, FormFlow):
+                raise ValueError(
+                    f"'next_form' should be of type {type(FormFlow)} not {self.next_form.__class__.__name__}")
 
-    def generate_menu(self):
-        self.menu_string = "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
-        return ''  # not used.
+            self.menu_string = getattr(self.next_form, 'get_response')(step, last_input)
+
+        elif len(self.children) == 0:
+            raise ValueError("Either children or next_form should be set to define next action")
+        else:
+            self.menu_string = "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
+
+        if self.show_title:
+            self.menu_string = f'{self.title}\n{self.menu_string}'
+
+    def get_menu(self, last_input, step=None):
+        self._generate_menu(last_input, step)
+        return self.menu_string
 
     def _generate_id(self):
         if self.parent is not None:
             _children = self.parent.children
             self.id = len(_children)
 
-    def __repr__(self):
-        classname = self.__class__.__name__
-        return "%s(%s %s)" % (classname, self.parent.title if self.parent is not None else "", " -> " + self.title)
 
+def path_processor(path_as_list: list, index=1, back_symbol: str = '0', home_symbol: str = '00'):
+    path = path_as_list
+
+    if path and path[0] in [str(back_symbol), str(home_symbol)]:
+        # invalid, we can't start by going back
+        raise ValueError("The path does not seem to be valid")
+
+    if len(path) == 1:
+        # only one path and is not 0, just return it
+        return path
+
+    if index + 1 > len(path):
+        # reached the end of list, nothing beyond to compare
+        return path
+
+    if path[index] == str(back_symbol):
+        path.pop(index)
+        path.pop(index - 1)
+
+        if len(path) > index - 1:
+            return path_processor(path, index - 1)
+
+    elif path[index] == str(home_symbol):
+        for i in range(index + 1):
+            path.pop(0)
+
+        if len(path) > 1:
+            return path_processor(path, index=1)
+    else:
+        return path_processor(path, index + 1)
+
+    return path
+
+
+def path_navigator(start: NavigationMenu, path: list):
+    if len(path) == 0:
+        return start
+
+    idx = path.pop(0)
+    child = start.children[idx - 1]
+
+    return path_navigator(child, path)
+
+
+def navigate(home_menu: NavigationMenu, step, ussd_string, processed_path):
+    def _menu(path):
+        _menu_ref: NavigationMenu = path_navigator(home_menu, path.copy())
+        _resp = getattr(_menu_ref, 'get_menu')(last_input=ussd_string.split("*")[-1], step=step)
+        return _resp
+    try:
+        resp = _menu(processed_path)
+    except FormBackError:
+        processed_path.pop()
+        resp = _menu(processed_path)
+
+    return resp
