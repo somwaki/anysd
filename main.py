@@ -1,12 +1,14 @@
 import enum
+import json
 import logging
+from ctypes import Union
 from itertools import count
 from typing import Callable, List
 
 import redis
 from anytree import Node, NodeMixin
 
-from conf import config as cfg, FormBackError
+from conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -20,18 +22,12 @@ class Channels(enum.Enum):
 
 
 class BaseUSSD:
-    def __init__(self, msisdn, session_id, channel: Channels):
+    def __init__(self, msisdn, session_id, ussd_string):
         self.msisdn = msisdn
         self.session_id = session_id
         self.redis_key = f"{self.msisdn}:{self.session_id}"
-        self.channel = Channels(channel)
         self.r = redis.Redis(**cfg['redis'])
-
-        nav: dict = cfg.get('navigation')
-        if nav:
-            self.back_symbol = str(nav.get('back_symbol'))
-        else:
-            self.back_symbol = '0'
+        self.ussd_string = ussd_string
 
 
 class ListInput:
@@ -59,16 +55,16 @@ class ListInput:
             raise ValueError(f'The list appears to be empty. ')
 
         if isinstance(self.items[0], (str, int, float)):
-            r = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
-            return f'CON {self.title}\n {r}'
+            rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
+            return f'CON {self.title}\n {rsp}'
 
         elif isinstance(self.items[0], dict):
-            r = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
-            return f'CON {self.title}\n {r}'
+            rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
+            return f'CON {self.title}\n {rsp}'
 
         elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
-            r = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
-            return f'CON {self.title}\n {r}'
+            rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
+            return f'CON {self.title}\n {rsp}'
 
         else:
             raise ValueError(
@@ -79,11 +75,12 @@ class ListInput:
         return _items[idx]
 
 
-class FormFlow(BaseUSSD):
-    def __init__(self, form_questions: dict, channel: Channels, step_validator: Callable,
-                 msisdn, session_id):
+class FormFlow:
+# class FormFlow(BaseUSSD):
+    # def __init__(self, form_questions: dict, step_validator: Callable, msisdn, session_id, ussd_string):
+    def __init__(self, form_questions: dict, step_validator: Callable):
 
-        super().__init__(msisdn, session_id, channel)
+        # super().__init__(msisdn, session_id, ussd_string)
         self.invalid_input = "CON Invalid input\n{menu}"
         self.form_questions = form_questions
         self.step_validator = step_validator
@@ -107,11 +104,16 @@ class FormFlow(BaseUSSD):
         skip_validation = False
         valid_last_input = False
 
+        _state = {
+
+        }
+
         # we skip validation, since we are going back, we just display the menu
-        if last_input == self.back_symbol:
+        if last_input == back_symbol:
             valid_last_input = True
             skip_validation = True
             current_step -= 2
+            _state['FORM_STEP'] = current_step
 
         if not skip_validation:
             # validate last input.
@@ -122,11 +124,15 @@ class FormFlow(BaseUSSD):
             try:
                 resp = self.form_questions[str(current_step + 1)]
 
+                # increment step here
+                _state['FORM_STEP'] = current_step + 1
             except ValueError:
                 resp = None
 
-            except KeyError:
-                if current_step == -1:
+            except KeyError or IndexError:
+                if current_step <= -1:
+                    # r.hdel(self.redis_key, *['FORM_STEP'])
+                    _state['FORM_STEP'] = None
                     raise FormBackError('Cannot go back beyond this point')
                 elif current_step == len(self.form_questions):
                     msg = 'END Next step not specified'
@@ -143,24 +149,24 @@ class FormFlow(BaseUSSD):
         if isinstance(resp, ListInput):
             resp = resp.get_items()
 
+        elif callable(resp):
+            resp = resp()
+
         if isinstance(resp, dict) and 'menu' in resp.keys():
             if isinstance(resp['menu'], ListInput):
                 resp['menu'] = resp['menu'].get_items()
-        return resp
+        return resp, _state
 
     def get_response(self, current_step, last_input):
         if current_step is None:
             current_step = 0
-        _resp = self._response(current_step, last_input)
+        _resp, state = self._response(current_step, last_input)
         if isinstance(_resp, dict) and 'menu' in _resp.keys():
             message = _resp['menu']
         else:
             message = _resp
 
-        if self.channel in [Channels.WHATSAPP, Channels.TELEGRAM]:
-            message = message[4:]
-
-        return message
+        return message, state
 
 
 class NavigationMenu(Node, NodeMixin):
@@ -173,7 +179,7 @@ class NavigationMenu(Node, NodeMixin):
         self.show_title = show_title
         self.id = next(self._ids)
         self._generate_id()
-
+        self.form_state = None
         self.label = self.id,
         self.menu_string = ""
         self.menu_string += "" if self.parent is None else "\n0: BACK\n00: MAIN MENU"
@@ -186,11 +192,16 @@ class NavigationMenu(Node, NodeMixin):
                 raise ValueError(
                     f"'next_form' should be of type {type(FormFlow)} not {self.next_form.__class__.__name__}")
 
-            self.menu_string = getattr(self.next_form, 'get_response')(step, last_input)
+            _message, _state = getattr(self.next_form, 'get_response')(step, last_input)
+            self.menu_string = _message
+            self.form_state = _state
 
         elif len(self.children) == 0:
             raise ValueError("Either children or next_form should be set to define next action")
         else:
+            if last_input == back_symbol:
+                raise NavigationBackError('We are at home')
+
             self.menu_string = "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
 
         if self.show_title:
@@ -198,7 +209,7 @@ class NavigationMenu(Node, NodeMixin):
 
     def get_menu(self, last_input, step=None):
         self._generate_menu(last_input, step)
-        return self.menu_string
+        return self.menu_string, self.form_state
 
     def _generate_id(self):
         if self.parent is not None:
@@ -206,59 +217,102 @@ class NavigationMenu(Node, NodeMixin):
             self.id = len(_children)
 
 
-def path_processor(path_as_list: list, index=1, back_symbol: str = '0', home_symbol: str = '00'):
-    path = path_as_list
+class NavigationController(BaseUSSD):
+    def __init__(self, home_menu: NavigationMenu, msisdn, session_id, ussd_string, channel: Channels = Channels.USSD):
 
-    if path and path[0] in [str(back_symbol), str(home_symbol)]:
-        # invalid, we can't start by going back
-        raise ValueError("The path does not seem to be valid")
+        super().__init__(msisdn, session_id, ussd_string)
+        self.home_menu = home_menu
 
-    if len(path) == 1:
-        # only one path and is not 0, just return it
+    def path_processor(self, path_as_list: list = None, index=1, ):
+        path = path_as_list
+        if path is None:
+            path = json.loads(r.hget(self.redis_key, 'PATH_AS_LIST'))
+
+        if path and path[0] in [str(back_symbol), str(home_symbol)]:
+            # invalid, we can't start by going back
+            raise ValueError("The path does not seem to be valid")
+
+        if len(path) == 1:
+            # only one path and is not 0, just return it
+            return path
+
+        if index + 1 > len(path):
+            # reached the end of list, nothing beyond to compare
+            return path
+
+        if path[index] == str(back_symbol):
+            path.pop(index)
+            path.pop(index - 1)
+
+            if len(path) > index - 1:
+                return self.path_processor(path, index - 1)
+
+        elif path[index] == str(home_symbol):
+            for i in range(index + 1):
+                path.pop(0)
+
+            if len(path) > 1:
+                return self.path_processor(path, index=1)
+        else:
+            return self.path_processor(path, index + 1)
+
         return path
 
-    if index + 1 > len(path):
-        # reached the end of list, nothing beyond to compare
-        return path
+    def path_navigator(self, start: NavigationMenu, path: list):
+        if len(path) == 0:
+            return start
 
-    if path[index] == str(back_symbol):
-        path.pop(index)
-        path.pop(index - 1)
+        idx = path.pop(0)
+        child = start.children[idx - 1]
 
-        if len(path) > index - 1:
-            return path_processor(path, index - 1)
+        return self.path_navigator(child, path)
 
-    elif path[index] == str(home_symbol):
-        for i in range(index + 1):
-            path.pop(0)
+    def _redis_processing(self, state: dict):
+        if state is None:
+            return
+        logger.info(f'redis state: {state}')
+        del_keys = [key for key in state.keys() if state[key] is None]
+        other_keys = [key for key in state.keys() if state[key] is not None]
+        if del_keys:
+            r.hdel(self.redis_key, *del_keys)
 
-        if len(path) > 1:
-            return path_processor(path, index=1)
-    else:
-        return path_processor(path, index + 1)
+        if other_keys:
+            for key in other_keys:
+                if type(state[key]) in [str, int, bytes, float]:
+                    r.hset(self.redis_key, key, state[key])
+                elif type(state[key]) in [dict, tuple, list]:
+                    try:
+                        r.hset(self.redis_key, json.dumps(state[key]))
+                    except Exception as e:
+                        logger.warning('Error saving state data to redis: ')
+                        logger.warning(e)
+                else:
+                    logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
 
-    return path
+    def navigate(self, processed_path):
+        step = r.hget(self.redis_key, 'FORM_STEP')
 
+        step = int(step) if step is not None else 0
 
-def path_navigator(start: NavigationMenu, path: list):
-    if len(path) == 0:
-        return start
+        def _menu(path, add_last_input=True):
+            _menu_ref: NavigationMenu = self.path_navigator(self.home_menu, path.copy())
+            _resp, _state, = getattr(_menu_ref, 'get_menu')(last_input=self.ussd_string.split("*")[-1] if add_last_input else None, step=step)
+            self._redis_processing(_state)
+            return _resp
+        try:
+            resp = _menu(processed_path)
+        except FormBackError:
+            # we pop the last path since it was pointing to a form, and now we can't go back further in the form
+            # , so we also pop the path that led us to the form,
+            # for that we also set FORM_STEP to None, which will later be deleted, since we are not navigating
+            # in the form
+            processed_path.pop()
+            self._redis_processing({'FORM_STEP': None})
+            resp = _menu(processed_path, add_last_input=False)
 
-    idx = path.pop(0)
-    child = start.children[idx - 1]
-
-    return path_navigator(child, path)
-
-
-def navigate(home_menu: NavigationMenu, step, ussd_string, processed_path):
-    def _menu(path):
-        _menu_ref: NavigationMenu = path_navigator(home_menu, path.copy())
-        _resp = getattr(_menu_ref, 'get_menu')(last_input=ussd_string.split("*")[-1], step=step)
-        return _resp
-    try:
-        resp = _menu(processed_path)
-    except FormBackError:
-        processed_path.pop()
-        resp = _menu(processed_path)
-
-    return resp
+        except NavigationBackError:
+            # we are going back inside navigation
+            if processed_path:
+                processed_path.pop()
+            resp = _menu(processed_path, add_last_input=False)
+        return resp
