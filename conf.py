@@ -28,3 +28,7 @@ class FormBackError(IndexError):
 class NavigationBackError(IndexError):
     """raised when you go back in a navigation"""
     pass
+
+
+class NavigationInvalidChoice(Exception):
+    """raised when an invalid choice is selected in navigation"""

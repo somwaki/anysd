@@ -1,14 +1,13 @@
 import enum
 import json
 import logging
-from ctypes import Union
 from itertools import count
 from typing import Callable, List
 
 import redis
 from anytree import Node, NodeMixin
 
-from conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError
+from conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, NavigationInvalidChoice
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -56,15 +55,15 @@ class ListInput:
 
         if isinstance(self.items[0], (str, int, float)):
             rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
-            return f'CON {self.title}\n {rsp}'
+            return f'CON {self.title}\n{rsp}'
 
         elif isinstance(self.items[0], dict):
             rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
-            return f'CON {self.title}\n {rsp}'
+            return f'CON {self.title}\n{rsp}'
 
         elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
             rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
-            return f'CON {self.title}\n {rsp}'
+            return f'CON {self.title}\n{rsp}'
 
         else:
             raise ValueError(
@@ -74,9 +73,18 @@ class ListInput:
         _items = [i for i in enumerate(self.items, start=1)]
         return _items[idx]
 
+    def validate(self, key):
+        try:
+            key = int(key)
+            if key in range(1, len(self.items)):
+                return True
+            return False
+        except ValueError:
+            return False
+
 
 class FormFlow:
-# class FormFlow(BaseUSSD):
+    # class FormFlow(BaseUSSD):
     # def __init__(self, form_questions: dict, step_validator: Callable, msisdn, session_id, ussd_string):
     def __init__(self, form_questions: dict, step_validator: Callable):
 
@@ -95,8 +103,6 @@ class FormFlow:
         if _val is None or not isinstance(_val, bool):
             logger.warning('Input not validated explicitly by validator function, Default value of True has been used')
             _val = True
-        if _validated is not None:
-            last_input = _validated
 
         return _val
 
@@ -104,9 +110,7 @@ class FormFlow:
         skip_validation = False
         valid_last_input = False
 
-        _state = {
-
-        }
+        _state = {}
 
         # we skip validation, since we are going back, we just display the menu
         if last_input == back_symbol:
@@ -144,7 +148,10 @@ class FormFlow:
                     resp = msg
 
         else:
-            resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'][4:])
+            if isinstance(self.form_questions[str(current_step)]['menu'], ListInput):
+                resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'].get_items()[4:])
+            else:
+                resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'][4:])
 
         if isinstance(resp, ListInput):
             resp = resp.get_items()
@@ -155,18 +162,18 @@ class FormFlow:
         if isinstance(resp, dict) and 'menu' in resp.keys():
             if isinstance(resp['menu'], ListInput):
                 resp['menu'] = resp['menu'].get_items()
-        return resp, _state
+        return resp, _state, valid_last_input
 
     def get_response(self, current_step, last_input):
         if current_step is None:
             current_step = 0
-        _resp, state = self._response(current_step, last_input)
+        _resp, state, valid = self._response(current_step, last_input)
         if isinstance(_resp, dict) and 'menu' in _resp.keys():
             message = _resp['menu']
         else:
             message = _resp
 
-        return message, state
+        return message, state, valid
 
 
 class NavigationMenu(Node, NodeMixin):
@@ -180,6 +187,7 @@ class NavigationMenu(Node, NodeMixin):
         self.id = next(self._ids)
         self._generate_id()
         self.form_state = None
+        self.valid_last_input = None
         self.label = self.id,
         self.menu_string = ""
         self.menu_string += "" if self.parent is None else "\n0: BACK\n00: MAIN MENU"
@@ -188,20 +196,28 @@ class NavigationMenu(Node, NodeMixin):
 
     def _generate_menu(self, last_input, step=None):
         if len(self.children) == 0 and self.next_form is not None:
+            # form variable is set but it is not a FormFlow class
             if not isinstance(self.next_form, FormFlow):
                 raise ValueError(
                     f"'next_form' should be of type {type(FormFlow)} not {self.next_form.__class__.__name__}")
 
-            _message, _state = getattr(self.next_form, 'get_response')(step, last_input)
+            # Here means this Node has no children but has next_form set
+
+            _message, _state, valid = getattr(self.next_form, 'get_response')(step, last_input)
             self.menu_string = _message
             self.form_state = _state
+            self.valid_last_input = valid
 
+        # Node has no children and no form to call
         elif len(self.children) == 0:
             raise ValueError("Either children or next_form should be set to define next action")
+
         else:
             if last_input == back_symbol:
                 raise NavigationBackError('We are at home')
 
+            # Navigating through nodes. Here it means we are at a node which has children. so we will display the
+            # children as menu
             self.menu_string = "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
 
         if self.show_title:
@@ -209,7 +225,7 @@ class NavigationMenu(Node, NodeMixin):
 
     def get_menu(self, last_input, step=None):
         self._generate_menu(last_input, step)
-        return self.menu_string, self.form_state
+        return self.menu_string, self.form_state, self.valid_last_input
 
     def _generate_id(self):
         if self.parent is not None:
@@ -230,7 +246,7 @@ class NavigationController(BaseUSSD):
 
         if path and path[0] in [str(back_symbol), str(home_symbol)]:
             # invalid, we can't start by going back
-            raise ValueError("The path does not seem to be valid")
+            return []
 
         if len(path) == 1:
             # only one path and is not 0, just return it
@@ -258,12 +274,30 @@ class NavigationController(BaseUSSD):
 
         return path
 
+    def path_to_list(self, start: NavigationMenu, path=None):
+
+        if path is None:
+            path = []
+        if start.parent is None:
+            return path
+        else:
+            path.insert(0, start.parent.children.index(start) + 1)
+            start = start.parent
+            return self.path_to_list(start, path)
+
     def path_navigator(self, start: NavigationMenu, path: list):
         if len(path) == 0:
             return start
 
         idx = path.pop(0)
-        child = start.children[idx - 1]
+        if start.children:
+            try:
+                idx = int(idx)
+                child = start.children[idx - 1]
+            except (ValueError, IndexError):
+                raise NavigationInvalidChoice('Invalid selection')
+        else:
+            return start
 
         return self.path_navigator(child, path)
 
@@ -289,16 +323,30 @@ class NavigationController(BaseUSSD):
                 else:
                     logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
 
-    def navigate(self, processed_path):
+    def navigate(self):
         step = r.hget(self.redis_key, 'FORM_STEP')
-
         step = int(step) if step is not None else 0
+        last_input = self.ussd_string.split("*")[-1]
+
+        processed_path = self.get_processed_path()
+
+        # append current input to processed_path
+        # NOTE: when processed_path will be passed through path_navigator function, it will be sanitized to
+        # point to the menu
+        processed_path.append(last_input)
 
         def _menu(path, add_last_input=True):
-            _menu_ref: NavigationMenu = self.path_navigator(self.home_menu, path.copy())
-            _resp, _state, = getattr(_menu_ref, 'get_menu')(last_input=self.ussd_string.split("*")[-1] if add_last_input else None, step=step)
+            pro_path = self.path_processor(path.copy())
+            _menu_ref = self.path_navigator(self.home_menu, pro_path.copy())
+            # path = self.path_to_list(_menu_ref)
+            # logger.info(f"MENU REF: {_menu_ref}  ::  PATH: {path}")
+            r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))
+            _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(last_input if add_last_input else None, step=step)
+            if valid_input is not None and not valid_input:
+                r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path[:-1]))
             self._redis_processing(_state)
             return _resp
+
         try:
             resp = _menu(processed_path)
         except FormBackError:
@@ -306,13 +354,30 @@ class NavigationController(BaseUSSD):
             # , so we also pop the path that led us to the form,
             # for that we also set FORM_STEP to None, which will later be deleted, since we are not navigating
             # in the form
+            processed_path = self.get_processed_path()
             processed_path.pop()
             self._redis_processing({'FORM_STEP': None})
+            r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(processed_path))
             resp = _menu(processed_path, add_last_input=False)
 
         except NavigationBackError:
             # we are going back inside navigation
+            processed_path = self.get_processed_path()
             if processed_path:
                 processed_path.pop()
+            r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(processed_path))
             resp = _menu(processed_path, add_last_input=False)
+
         return resp
+
+    def get_processed_path(self):
+        processed_path = r.hget(self.redis_key, 'PROCESSED_PATH')
+        if not processed_path:
+            processed_path = "[]"
+        try:
+            processed_path = json.loads(processed_path)
+        except Exception as e:
+            logger.warning("invalid processed path variable... ")
+            logger.warning(e)
+            processed_path = []
+        return processed_path
