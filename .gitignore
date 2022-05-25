@@ -5,3 +5,5 @@ validator.py
 venv
 .idea
 __pycache__
+anysd.egg-info
+dist

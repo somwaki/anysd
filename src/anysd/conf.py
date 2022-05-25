@@ -1,7 +1,8 @@
 import cfg_load
 import redis
+import os
 
-config_path = 'config.yaml'
+config_path = os.environ.get("ANYSD_CONFIG_FILE", 'config.yaml')
 config = cfg_load.load(config_path)
 
 nav: dict = config.get('navigation')

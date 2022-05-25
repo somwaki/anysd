@@ -7,7 +7,7 @@ from typing import Callable, List
 import redis
 from anytree import Node, NodeMixin
 
-from conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, NavigationInvalidChoice
+from .conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, NavigationInvalidChoice
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -27,6 +27,10 @@ class BaseUSSD:
         self.redis_key = f"{self.msisdn}:{self.session_id}"
         self.r = redis.Redis(**cfg['redis'])
         self.ussd_string = ussd_string
+
+
+class ShortCutHandler:
+    pass
 
 
 class ListInput:
@@ -218,10 +222,10 @@ class NavigationMenu(Node, NodeMixin):
 
             # Navigating through nodes. Here it means we are at a node which has children. so we will display the
             # children as menu
-            self.menu_string = "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
+            self.menu_string = f"CON Select {self.title}:\n" + "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
 
-        if self.show_title:
-            self.menu_string = f'{self.title}\n{self.menu_string}'
+        # if self.show_title:
+        #     self.menu_string = f'{self.title}\n{self.menu_string[4:] if self.menu_string[0:2] in ["CON", "END"] else self.menu_string}'
 
     def get_menu(self, last_input, step=None):
         self._generate_menu(last_input, step)
@@ -333,7 +337,9 @@ class NavigationController(BaseUSSD):
         # append current input to processed_path
         # NOTE: when processed_path will be passed through path_navigator function, it will be sanitized to
         # point to the menu
-        processed_path.append(last_input)
+
+        if last_input:
+            processed_path.append(last_input)
 
         def _menu(path, add_last_input=True):
             pro_path = self.path_processor(path.copy())
@@ -349,6 +355,7 @@ class NavigationController(BaseUSSD):
 
         try:
             resp = _menu(processed_path)
+            r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
         except FormBackError:
             # we pop the last path since it was pointing to a form, and now we can't go back further in the form
             # , so we also pop the path that led us to the form,
@@ -359,15 +366,18 @@ class NavigationController(BaseUSSD):
             self._redis_processing({'FORM_STEP': None})
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(processed_path))
             resp = _menu(processed_path, add_last_input=False)
+            r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
 
         except NavigationBackError:
             # we are going back inside navigation
             processed_path = self.get_processed_path()
-            if processed_path:
-                processed_path.pop()
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(processed_path))
             resp = _menu(processed_path, add_last_input=False)
+            r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
+        except NavigationInvalidChoice:
+            last_resp = r.hget(self.redis_key, "LAST_SUCCESS_RESPONSE")
 
+            resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp[:2] in ["CON", "END"] else ""}'
         return resp
 
     def get_processed_path(self):

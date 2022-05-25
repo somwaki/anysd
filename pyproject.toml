@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anysd"
+version = "1.0.7"
+description = "For building ussd applications faster, with navigation management out of the box"
+readme = "README.md"
+authors = [{name = "Somwaki", email = "somwaki@gmail.com"}, {name = "Steven Ondieki", email = "ondiekisteven1@gmail.com" }]
+license = {file =  "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["ussd", "navigation"]
+dependencies = [
+    "anytree <= 2.8.0",
+    "cfg-load <= 0.9.0",
+    "redis"
+]
+requires-python = ">=3.7"
+
+[project.optional-dependencies]
+dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
+
+[project.urls]
+Homepage = "https://github.com/somwaki/anysd"
