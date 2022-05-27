@@ -3,11 +3,6 @@
 
 AnySD (Any USSD) is a package with classes to help you quickly write ussd (or ussd-like) applications.
 
-### Installation
-
-`
-pip install anysd
-`
 
 ### Understanding Anysd ussd
 
