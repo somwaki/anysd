@@ -3,7 +3,7 @@
 
 AnySD (Any USSD) is a package with classes to help you quickly write ussd (or ussd-like) applications.
 
-###Installation
+### Installation
 
 `
 pip install anysd
@@ -12,7 +12,7 @@ pip install anysd
 ### Understanding Anysd ussd
 
 ---
-####Anysd
+#### Anysd
 Anysd uses [anytree](https://pypi.org/project/anytree/) to build a tree navigation, 
 and [redis](https://pypi.org/project/redis/) for tracking navigation and session data (variables)
 *Therefore, you need redis to continue*
