@@ -80,7 +80,8 @@ class ListInput:
     def validate(self, key):
         try:
             key = int(key)
-            if key in range(1, len(self.items)):
+            if key in range(1, len(self.items) + 1):
+
                 return True
             return False
         except ValueError:
@@ -96,6 +97,18 @@ class FormFlow:
         self.invalid_input = "CON Invalid input\n{menu}"
         self.form_questions = form_questions
         self.step_validator = step_validator
+
+    def get_step_type(self, step):
+        try:
+            t = type(self.form_questions[str(step)]['menu'])
+        except KeyError:
+            return None
+
+        logger.info(f"MENU: {self.form_questions[str(step)]}")
+        return t
+
+    def get_step_item(self, step):
+        return self.form_questions[str(step)]['menu']
 
     def _validate_last_input(self, current_step, last_input):
         """
@@ -125,12 +138,16 @@ class FormFlow:
 
         if not skip_validation:
             # validate last input.
-            valid_last_input = self._validate_last_input(current_step, last_input)
+            if self.get_step_type(current_step) == ListInput:
+                list_ref: ListInput = self.get_step_item(current_step)
+                valid_last_input = list_ref.validate(last_input)
+            else:
+                valid_last_input = self._validate_last_input(current_step, last_input)
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
             try:
-                resp = self.form_questions[str(current_step + 1)]
+                resp = self.form_questions[str(current_step + 1)].copy()
 
                 # increment step here
                 _state['FORM_STEP'] = current_step + 1
@@ -152,10 +169,11 @@ class FormFlow:
                     resp = msg
 
         else:
-            if isinstance(self.form_questions[str(current_step)]['menu'], ListInput):
-                resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'].get_items()[4:])
+            _menu = self.form_questions[str(current_step)]['menu']
+            if isinstance(_menu, ListInput):
+                resp = self.invalid_input.format(menu=_menu.get_items()[4:])
             else:
-                resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'][4:])
+                resp = self.invalid_input.format(menu=_menu[4:])
 
         if isinstance(resp, ListInput):
             resp = resp.get_items()
@@ -217,6 +235,7 @@ class NavigationMenu(Node, NodeMixin):
             raise ValueError("Either children or next_form should be set to define next action")
 
         else:
+            self.form_state = {'FORM_STEP': None}
             if last_input == back_symbol:
                 raise NavigationBackError('We are at home')
 
@@ -377,7 +396,9 @@ class NavigationController(BaseUSSD):
         except NavigationInvalidChoice:
             last_resp = r.hget(self.redis_key, "LAST_SUCCESS_RESPONSE")
 
-            resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp[:2] in ["CON", "END"] else ""}'
+            resp = f'CON Invalid Choice\n{last_resp[4:] if  last_resp and last_resp[:3] in ["CON", "END"] else ""}'
+
+        logger.info(f'Response :: {resp}')
         return resp
 
     def get_processed_path(self):
