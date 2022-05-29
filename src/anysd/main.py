@@ -74,8 +74,7 @@ class ListInput:
                 f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
 
     def get_item(self, idx):
-        _items = [i for i in enumerate(self.items, start=1)]
-        return _items[idx]
+        return self.items[idx-1]
 
     def validate(self, key):
         try:
@@ -103,8 +102,6 @@ class FormFlow:
             t = type(self.form_questions[str(step)]['menu'])
         except KeyError:
             return None
-
-        logger.info(f"MENU: {self.form_questions[str(step)]}")
         return t
 
     def get_step_item(self, step):
@@ -146,7 +143,17 @@ class FormFlow:
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
+            if last_input not in [back_symbol, home_symbol] and current_step != 0:
+                _field_name: str = self.form_questions.get(str(current_step)).get('name')
+                if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
+                    if self.get_step_type(current_step) == ListInput:
+                        _state[_field_name] = self.get_step_item(current_step).get_item(int(last_input))
+                    else:
+                        _state[_field_name] = last_input
+                else:
+                    logger.warning(f'field_name "{_field_name}" is not valid. It should be contain letters, underscores and numbers, but begin with a letter or underscore')
             try:
+
                 resp = self.form_questions[str(current_step + 1)].copy()
 
                 # increment step here
