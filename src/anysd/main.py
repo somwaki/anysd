@@ -1,13 +1,15 @@
 import enum
 import json
 import logging
+import string
 from itertools import count
 from typing import Callable, List
 
 import redis
 from anytree import Node, NodeMixin
 
-from .conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, NavigationInvalidChoice
+from .conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
+    NavigationInvalidChoice
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -74,13 +76,12 @@ class ListInput:
                 f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
 
     def get_item(self, idx):
-        _items = [i for i in enumerate(self.items, start=1)]
-        return _items[idx]
+        return self.items[idx - 1]
 
     def validate(self, key):
         try:
             key = int(key)
-            if key in range(1, len(self.items)):
+            if key in range(1, len(self.items) + 1):
                 return True
             return False
         except ValueError:
@@ -96,6 +97,16 @@ class FormFlow:
         self.invalid_input = "CON Invalid input\n{menu}"
         self.form_questions = form_questions
         self.step_validator = step_validator
+
+    def get_step_type(self, step):
+        try:
+            t = type(self.form_questions[str(step)]['menu'])
+        except KeyError:
+            return None
+        return t
+
+    def get_step_item(self, step):
+        return self.form_questions[str(step)]['menu']
 
     def _validate_last_input(self, current_step, last_input):
         """
@@ -125,12 +136,30 @@ class FormFlow:
 
         if not skip_validation:
             # validate last input.
-            valid_last_input = self._validate_last_input(current_step, last_input)
+            if self.get_step_type(current_step) == ListInput:
+                list_ref: ListInput = self.get_step_item(current_step)
+                valid_last_input = list_ref.validate(last_input)
+            else:
+                valid_last_input = self._validate_last_input(current_step, last_input)
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
+            if last_input not in [back_symbol, home_symbol] and current_step != 0:
+                # setting last input as variable to be saved in redis
+                _field_name: str = self.form_questions.get(str(current_step)).get('name')
+                if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
+                    if self.get_step_type(current_step) == ListInput:
+                        _state[_field_name] = self.get_step_item(current_step).get_item(int(last_input))
+                    else:
+                        _state[_field_name] = last_input
+                else:
+                    logger.warning(
+                        f'field_name "{_field_name}" is not valid. It should be contain letters, underscores and numbers, but begin with a letter or underscore')
+                # end variable
+
             try:
-                resp = self.form_questions[str(current_step + 1)]
+
+                resp = self.form_questions[str(current_step + 1)].copy()
 
                 # increment step here
                 _state['FORM_STEP'] = current_step + 1
@@ -139,7 +168,6 @@ class FormFlow:
 
             except KeyError or IndexError:
                 if current_step <= -1:
-                    # r.hdel(self.redis_key, *['FORM_STEP'])
                     _state['FORM_STEP'] = None
                     raise FormBackError('Cannot go back beyond this point')
                 elif current_step == len(self.form_questions):
@@ -152,10 +180,11 @@ class FormFlow:
                     resp = msg
 
         else:
-            if isinstance(self.form_questions[str(current_step)]['menu'], ListInput):
-                resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'].get_items()[4:])
+            _menu = self.form_questions[str(current_step)]['menu']
+            if isinstance(_menu, ListInput):
+                resp = self.invalid_input.format(menu=_menu.get_items()[4:])
             else:
-                resp = self.invalid_input.format(menu=self.form_questions[str(current_step)]['menu'][4:])
+                resp = self.invalid_input.format(menu=_menu[4:])
 
         if isinstance(resp, ListInput):
             resp = resp.get_items()
@@ -171,6 +200,7 @@ class FormFlow:
     def get_response(self, current_step, last_input):
         if current_step is None:
             current_step = 0
+
         _resp, state, valid = self._response(current_step, last_input)
         if isinstance(_resp, dict) and 'menu' in _resp.keys():
             message = _resp['menu']
@@ -194,9 +224,9 @@ class NavigationMenu(Node, NodeMixin):
         self.valid_last_input = None
         self.label = self.id,
         self.menu_string = ""
-        self.menu_string += "" if self.parent is None else "\n0: BACK\n00: MAIN MENU"
+        self.menu_string += "" if self.parent is None else f"\n{back_symbol}: BACK  {home_symbol}: MAIN MENU"
 
-        self.all_ids = next(self._ids)  # TODO: remove this after testing..
+        self.all_ids = next(self._ids)
 
     def _generate_menu(self, last_input, step=None):
         if len(self.children) == 0 and self.next_form is not None:
@@ -217,12 +247,14 @@ class NavigationMenu(Node, NodeMixin):
             raise ValueError("Either children or next_form should be set to define next action")
 
         else:
+            self.form_state = {'FORM_STEP': None}
             if last_input == back_symbol:
                 raise NavigationBackError('We are at home')
 
             # Navigating through nodes. Here it means we are at a node which has children. so we will display the
             # children as menu
-            self.menu_string = f"CON Select {self.title}:\n" + "\n".join([f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
+            self.menu_string = f"CON Select {self.title}:\n" + "\n".join(
+                [f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
 
         # if self.show_title:
         #     self.menu_string = f'{self.title}\n{self.menu_string[4:] if self.menu_string[0:2] in ["CON", "END"] else self.menu_string}'
@@ -238,7 +270,7 @@ class NavigationMenu(Node, NodeMixin):
 
 
 class NavigationController(BaseUSSD):
-    def __init__(self, home_menu: NavigationMenu, msisdn, session_id, ussd_string, channel: Channels = Channels.USSD):
+    def __init__(self, home_menu: NavigationMenu, msisdn, session_id, ussd_string):
 
         super().__init__(msisdn, session_id, ussd_string)
         self.home_menu = home_menu
@@ -347,7 +379,8 @@ class NavigationController(BaseUSSD):
             # path = self.path_to_list(_menu_ref)
             # logger.info(f"MENU REF: {_menu_ref}  ::  PATH: {path}")
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))
-            _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(last_input if add_last_input else None, step=step)
+            _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(last_input if add_last_input else None,
+                                                                         step=step)
             if valid_input is not None and not valid_input:
                 r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path[:-1]))
             self._redis_processing(_state)
@@ -377,7 +410,10 @@ class NavigationController(BaseUSSD):
         except NavigationInvalidChoice:
             last_resp = r.hget(self.redis_key, "LAST_SUCCESS_RESPONSE")
 
-            resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp[:2] in ["CON", "END"] else ""}'
+            resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp and last_resp[:3] in ["CON", "END"] else ""}'
+
+        resp: str = self.format_response(resp)
+        logger.info(f'Response :: {resp}')
         return resp
 
     def get_processed_path(self):
@@ -391,3 +427,13 @@ class NavigationController(BaseUSSD):
             logger.warning(e)
             processed_path = []
         return processed_path
+
+    def format_response(self, resp):
+        items = [tup[1] for tup in string.Formatter().parse(resp) if tup[1] is not None]
+        kwargs = {}
+        for item in items:
+            kwargs[item] = r.hget(self.redis_key, item)
+
+        logger.info(f'KWARGS :: {kwargs}')
+        resp = resp.format(**kwargs)
+        return resp
