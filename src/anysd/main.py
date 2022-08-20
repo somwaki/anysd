@@ -443,7 +443,7 @@ class NavigationController(BaseUSSD):
         last_input = self.ussd_string.split("*")[-1]
 
         # processed_path = self.get_processed_path()
-        processed_path = self.ussd_string.split("*")
+        processed_path = self.ussd_string.split("*") if ussd_string else []
 
         # append current input to processed_path
         # NOTE: when processed_path will be passed through path_navigator function, it will be sanitized to
