@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anysd"
-version = "1.0.7.3"
+version = "1.0.8"
 description = "For building ussd applications faster, with navigation management out of the box"
 readme = "README.md"
 authors = [{name = "Somwaki", email = "somwaki@gmail.com"}, {name = "Steven Ondieki", email = "ondiekisteven1@gmail.com" }]

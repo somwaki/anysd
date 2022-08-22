@@ -6,12 +6,12 @@ config_path = os.environ.get("ANYSD_CONFIG_FILE", 'config.yaml')
 config = cfg_load.load(config_path)
 
 nav: dict = config.get('navigation')
-if nav:
+if nav and 'back_symbol' in nav:
     back_symbol = str(nav.get('back_symbol'))
 else:
     back_symbol = '0'
 
-if nav:
+if nav and 'home_symbol' in nav:
     home_symbol = str(nav.get('home_symbol'))
 else:
     home_symbol = '00'
@@ -33,3 +33,11 @@ class NavigationBackError(IndexError):
 
 class NavigationInvalidChoice(Exception):
     """raised when an invalid choice is selected in navigation"""
+
+
+class ImproperlyConfigured(Exception):
+    """raised for all other anysd errors"""
+
+
+class ParseError(ImproperlyConfigured):
+    """parse error when parsing dictionary to create ussd navigation"""
