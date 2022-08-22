@@ -437,13 +437,13 @@ class NavigationController(BaseUSSD):
                 else:
                     logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
 
-    def navigate(self, msisdn, session_id, ussd_string, offset=None):
+    def navigate(self, offset=None):
         step = r.hget(self.redis_key, 'FORM_STEP')
         step = int(step) if step is not None else 0
         last_input = self.ussd_string.split("*")[-1]
 
         # processed_path = self.get_processed_path()
-        processed_path = self.ussd_string.split("*") if ussd_string else []
+        processed_path = self.ussd_string.split("*") if self.ussd_string else []
 
         # append current input to processed_path
         # NOTE: when processed_path will be passed through path_navigator function, it will be sanitized to
@@ -462,9 +462,9 @@ class NavigationController(BaseUSSD):
 
             _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(
                 last_input if add_last_input else None,
-                msisdn,
-                session_id,
-                ussd_string,
+                self.msisdn,
+                self.session_id,
+                self.ussd_string,
                 step=step
             )
 

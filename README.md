@@ -58,7 +58,7 @@ of the receiver. For airtime, we need amount, and for bundles, we'll select a bu
 ```python
 # validator.py
 
-from anysd.main import FormFlow, ListInput
+from anysd import FormFlow, ListInput
 airtime_questions = {
     "1": {'name': 'AIRTIME_RECEIVER', 'menu': ListInput(items=['Buy for myself', 'Buy for other number'], title='Select Option')},
     '2': {'name': 'AIRTIME_AMOUNT', 'menu': 'Enter amount'},
@@ -84,11 +84,12 @@ bundle_questions = {
 By default, list inputs will be validated, but it's good you write another validator.
 In validation, you specify what conditions make a user input invalid, and return either true or false on the user input.
 Also, you can modify the input, if you need to
+Note: the validators should accept extra `kwargs` that may be passed 
 
 ```python
 # validator.py
 
-def airtime_validator(current_step, last_input: str):
+def airtime_validator(current_step, last_input: str, **kwargs):
     valid = True
     validated = None  # in case we want to modify user input, 
     
@@ -104,7 +105,7 @@ def airtime_validator(current_step, last_input: str):
     
     return valid, validated
 
-def bundle_validator(current_step, last_input: str):
+def bundle_validator(current_step, last_input: str, **kwargs):
     valid = True
     validated = None  # in case we want to modify user input, 
     
@@ -122,7 +123,7 @@ Link the menu, with the forms
 ```python
 # menu.py
 
-from anysd.main import NavigationMenu, FormFlow
+from anysd import NavigationMenu, FormFlow
 from validator import *
 
 
@@ -148,7 +149,7 @@ If you haven't, install flask: `pip install flask` in your virtualenv
 
 ```python
 from flask import Flask, request
-from anysd.main import NavigationController
+from anysd import NavigationController
 from menu import home
 
 app = Flask(__name__)
