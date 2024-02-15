@@ -9,7 +9,7 @@ import redis
 from anytree import Node, NodeMixin
 
 from .conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
-    NavigationInvalidChoice, ImproperlyConfigured
+    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -29,6 +29,7 @@ class BaseUSSD:
         self.redis_key = f"{self.msisdn}:{self.session_id}"
         self.r = redis.Redis(**cfg['redis'])
         self.ussd_string = ussd_string
+        self.last_input = self.ussd_string.split("*")[-1]
 
 
 class ShortCutHandler:
@@ -228,7 +229,7 @@ class FormFlow:
                     msg = 'END Step response not specified'
                     logger.warning(msg[4:])
                     resp = msg
-
+                raise
         else:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
@@ -269,6 +270,54 @@ class FormFlow:
         _resp, state, valid = self._response(current_step, last_input, msisdn, session_id, ussd_string)
 
         return _resp, state, valid
+
+
+class ConditionalFlow:
+    def __init__(
+            self,
+            condition_fxn,
+            condition_result_mapping: dict,
+            cache_results=False
+    ):
+
+        self.condition_fxn = condition_fxn
+        self.condition_result_mapping = condition_result_mapping
+        self.cache_result = cache_results
+
+    def __str__(self):
+        return f'{self.condition_fxn}'
+
+    def verify_result(self, result):
+        if result is None:
+            raise ConditionResultError('Condition Evaluation Result is None')
+
+        if result not in self.condition_result_mapping.keys():
+            raise ConditionResultError(f'Condition Evaluation Result <{result}> not in mapping keys')
+
+    def evaluate(self, msisdn, session_id, ussd_string, last_input, redis_key, redis_conn):
+        try:
+            result = self.condition_fxn(
+                msisdn=msisdn,
+                session_id=session_id,
+                ussd_string=ussd_string,
+                last_input=last_input,
+                redis_key=redis_key,
+                redis_conn=redis_conn
+            )
+            self.verify_result(result)
+        except ConditionResultError:
+            raise
+        except Exception as x:
+            logger.exception(x)
+            raise ConditionEvaluationError('Error when evaluating conditional function')
+        return result
+
+    def get_menu(self, msisdn, session_id, ussd_string, last_input, redis_key, redis_conn):
+        result = self.evaluate(msisdn, session_id, ussd_string, last_input, redis_key, redis_conn)
+
+        menu = self.condition_result_mapping.get(result)
+
+        return menu
 
 
 class NavigationMenu(Node, NodeMixin):
@@ -399,9 +448,13 @@ class NavigationController(BaseUSSD):
             return processed_path[offset:]
         return processed_path
 
-    def path_navigator(self, start: NavigationMenu, path: list):
-        if len(path) == 0:
+    def path_navigator(self, start: NavigationMenu, path: list, **kwargs):
+        if len(path) == 0 and isinstance(start, NavigationMenu):
             return start
+
+        if isinstance(start, ConditionalFlow):
+            start = start.get_menu(**kwargs)
+            return self.path_navigator(start, path, **kwargs)
 
         idx = path.pop(0)
         if start.children:
@@ -413,7 +466,7 @@ class NavigationController(BaseUSSD):
         else:
             return start
 
-        return self.path_navigator(child, path)
+        return self.path_navigator(child, path, **kwargs)
 
     def _redis_processing(self, state: dict):
         if state is None:
@@ -455,7 +508,16 @@ class NavigationController(BaseUSSD):
         def _menu(path, add_last_input=True, offset=None):
             pro_path = self.path_processor(path.copy(), offset=offset)
             logger.info(f"PROCESSED_PATH: {pro_path}")
-            _menu_ref = self.path_navigator(self.home_menu, pro_path.copy())
+
+            data = {
+                'msisdn': self.msisdn,
+                'session_id': self.session_id,
+                'ussd_string': self.ussd_string,
+                'last_input': self.last_input,
+                'redis_key': self.redis_key,
+                'redis_conn': r
+            }
+            _menu_ref = self.path_navigator(self.home_menu, pro_path.copy(), **data)
             # path = self.path_to_list(_menu_ref)
             # logger.info(f"MENU REF: {_menu_ref}  ::  PATH: {path}")
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))

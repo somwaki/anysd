@@ -18,7 +18,7 @@ else:
 
 rc = config['redis']
 r = redis.Redis(host=rc.get('host', 'localhost'), port=rc.get('port', 6379), charset="utf-8",
-                decode_responses=True, db=rc.get('db', 4))
+                password=rc.get('password', ''), decode_responses=True, db=rc.get('db', 4))
 
 
 class FormBackError(IndexError):
@@ -41,3 +41,11 @@ class ImproperlyConfigured(Exception):
 
 class ParseError(ImproperlyConfigured):
     """parse error when parsing dictionary to create ussd navigation"""
+
+
+class ConditionEvaluationError(Exception):
+    """raised when an error occurs when calling condition evaluation function"""
+
+
+class ConditionResultError(Exception):
+    """raised when the condition evaluation function result is not in mapping keys"""
