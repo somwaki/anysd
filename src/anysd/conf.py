@@ -3,7 +3,10 @@ import redis
 import os
 
 config_path = os.environ.get("ANYSD_CONFIG_FILE", 'config.yaml')
-config = cfg_load.load(config_path)
+configs = cfg_load.load(config_path)
+
+environment = os.getenv('ENVIRONMENT', 'development')
+config = configs.get(environment)
 
 nav: dict = config.get('navigation')
 if nav and 'back_symbol' in nav:
