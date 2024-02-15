@@ -9,7 +9,7 @@ import redis
 from anytree import Node, NodeMixin
 
 from .conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
-    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError
+    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -27,7 +27,7 @@ class BaseUSSD:
         self.msisdn = msisdn
         self.session_id = session_id
         self.redis_key = f"{self.msisdn}:{self.session_id}"
-        self.r = redis.Redis(**cfg['redis'])
+        self.r = redis.Redis(**rc)
         self.ussd_string = ussd_string
         self.last_input = self.ussd_string.split("*")[-1]
 
