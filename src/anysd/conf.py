@@ -19,7 +19,10 @@ if nav and 'home_symbol' in nav:
 else:
     home_symbol = '00'
 
-rc = config['redis']
+rc = config.get('redis')
+if 'connection' in rc:
+    rc = rc.get('connection')
+
 r = redis.Redis(host=rc.get('host', 'localhost'), port=rc.get('port', 6379), charset="utf-8",
                 password=rc.get('password', ''), decode_responses=True, db=rc.get('db', 4))
 
