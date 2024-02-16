@@ -40,6 +40,10 @@ def get_var(msisdn, session_id, var):
     return r.hget(f'{msisdn}:{session_id}', var)
 
 
+def set_var(msisdn, session_id, data):
+    return r.hset(f'{msisdn}:{session_id}', mapping=data)
+
+
 class ListInput:
 
     def __init__(self, items: List, title: str, key=None, idx=None, extra=None):
@@ -60,6 +64,9 @@ class ListInput:
         self.extra = extra
 
     def get_items(self):
+        if callable(self.items):
+            self.items = self.items()
+            
         if not isinstance(self.items, list):
             raise ValueError(f'self.items should be of type list, not {self.items.__class__.__name__}')
         if not self.items:
