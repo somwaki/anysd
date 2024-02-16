@@ -364,7 +364,7 @@ class NavigationMenu(Node, NodeMixin):
 
             # Navigating through nodes. Here it means we are at a node which has children. so we will display the
             # children as menu
-            self.menu_string = f"CON Select {self.title}:\n" + "\n".join(
+            self.menu_string = f"CON {self.title}:\n" + "\n".join(
                 [f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
 
         # if self.show_title: self.menu_string = f'{self.title}\n{self.menu_string[4:] if self.menu_string[0:2] in [
