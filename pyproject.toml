@@ -2,28 +2,30 @@
 requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[project]
+[tool.poetry]
 name = "anysd"
-version = "1.0.9"
+version = "1.0.10"
 description = "For building ussd applications faster, with navigation management out of the box"
 readme = "README.md"
-authors = [{name = "Somwaki", email = "somwaki@gmail.com"}, {name = "Steven Ondieki", email = "ondiekisteven1@gmail.com" }]
-license = {file =  "LICENSE"}
+authors = ["Somwaki <somwaki@gmail.com>", "Steven Ondieki <ondiekisteven1@gmail.com>"]
+license = "MIT"
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
 ]
 keywords = ["ussd", "navigation"]
-dependencies = [
-    "anytree <= 2.8.0",
-    "cfg-load <= 0.9.0",
-    "redis"
-]
-requires-python = ">=3.7"
 
-[project.optional-dependencies]
-dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
+[tool.poetry.dependencies]
 
-[project.urls]
+anytree = "<=2.8.0"
+cfg-load = "<=0.9.0"
+redis = ">=4.0.0"
+
+python = ">=3.7"
+black = { version = ">=22.1.0", optional = true }
+bumpver = { version = ">=2020.1108", optional = true }
+isort = { version = ">=5.9.0", optional = true }
+
+[tool.poetry.urls]
 Homepage = "https://github.com/somwaki/anysd"
