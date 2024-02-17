@@ -8,7 +8,7 @@ from typing import Callable, List
 import redis
 from anytree import Node, NodeMixin
 
-from .conf import config as cfg, FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
+from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
     NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
@@ -46,7 +46,7 @@ def set_var(msisdn, session_id, data):
 
 class ListInput:
 
-    def __init__(self, items: List, title: str, key=None, idx=None, extra=None):
+    def __init__(self, items: List, title: str, key=None, idx=None, extra=None, empty_list_message=None):
         """
         For handling Listable items
 
@@ -62,31 +62,33 @@ class ListInput:
         self.key = key
         self.idx = idx
         self.extra = extra
+        self.empty_list_message = empty_list_message
 
-    def get_items(self):
+    def get_items(self, msisdn=None, session_id=None, **kwargs):
         if callable(self.items):
-            self.items = self.items()
-            
+            self.items = self.items(msisdn=msisdn, session_id=session_id)
+
         if not isinstance(self.items, list):
             raise ValueError(f'self.items should be of type list, not {self.items.__class__.__name__}')
-        if not self.items:
-            raise ValueError(f'The list appears to be empty. ')
+        if len(self.items) == 0:
 
-        if isinstance(self.items[0], (str, int, float)):
-            rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
-            menu = f'CON {self.title}\n{rsp}'
-
-        elif isinstance(self.items[0], dict):
-            rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
-            menu = f'CON {self.title}'
-
-        elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
-            rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
-            menu = f'CON {self.title}\n{rsp}'
-
+            menu = self.empty_list_message
         else:
-            raise ValueError(
-                f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
+            if isinstance(self.items[0], (str, int, float)):
+                rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
+                menu = f'CON {self.title}\n{rsp}'
+
+            elif isinstance(self.items[0], dict):
+                rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
+                menu = f'CON {self.title}\n{rsp}'
+
+            elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
+                rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
+                menu = f'CON {self.title}\n{rsp}'
+
+            else:
+                raise ValueError(
+                    f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
 
         xtra = '' if self.extra is None else f'\n{self.extra}'
         return f'{menu}{xtra}'
@@ -240,7 +242,7 @@ class FormFlow:
         else:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
-                resp = self.invalid_input.format(menu=_menu.get_items()[4:])
+                resp = self.invalid_input.format(menu=_menu.get_items(msisdn=msisdn, session_id=session_id)[4:])
             elif callable(_menu):
                 resp = self.invalid_input.format(menu=_menu(
                     msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, data={})[4:])
@@ -249,7 +251,8 @@ class FormFlow:
 
         # start get the response for next menu
         if isinstance(resp['menu'], ListInput):
-            resp = resp['menu'].get_items()
+            resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
+                                          ussd_string=ussd_string)
 
         elif callable(resp['menu']):
             data = {}
