@@ -107,6 +107,8 @@ class ListInput:
             return False
         except ValueError:
             return False
+        except Exception:
+            return True
 
 
 class FormFlow:
@@ -557,7 +559,10 @@ class NavigationController(BaseUSSD):
             # for that we also set FORM_STEP to None, which will later be deleted, since we are not navigating
             # in the form
             processed_path = self.get_processed_path()
-            processed_path.pop()
+            try:
+                processed_path.pop()
+            except:
+                pass
             self._redis_processing({'FORM_STEP': None})
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(processed_path))
             resp = _menu(processed_path, add_last_input=False, offset=offset)
