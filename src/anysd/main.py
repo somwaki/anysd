@@ -3,7 +3,7 @@ import json
 import logging
 import string
 from itertools import count
-from typing import Callable, List
+from typing import Callable, List, Union
 
 import redis
 from anytree import Node, NodeMixin
@@ -46,7 +46,8 @@ def set_var(msisdn, session_id, data):
 
 class ListInput:
 
-    def __init__(self, items: List, title: str, key=None, idx=None, extra=None, empty_list_message=None):
+    def __init__(self, items: Union[List, callable], title: str, key=None, idx=None, extra=None,
+                 empty_list_message=None):
         """
         For handling Listable items
 
@@ -66,7 +67,7 @@ class ListInput:
 
     def get_items(self, msisdn=None, session_id=None, **kwargs):
         if callable(self.items):
-            self.items = self.items(msisdn=msisdn, session_id=session_id)
+            self.items = self.items(msisdn=msisdn, session_id=session_id, **kwargs)
 
         if not isinstance(self.items, list):
             raise ValueError(f'self.items should be of type list, not {self.items.__class__.__name__}')
@@ -242,7 +243,9 @@ class FormFlow:
         else:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
-                resp = self.invalid_input.format(menu=_menu.get_items(msisdn=msisdn, session_id=session_id)[4:])
+                resp = self.invalid_input.format(
+                    menu=_menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
+                                         ussd_string=ussd_string)[4:])
             elif callable(_menu):
                 resp = self.invalid_input.format(menu=_menu(
                     msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, data={})[4:])
