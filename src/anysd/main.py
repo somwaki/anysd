@@ -107,8 +107,6 @@ class ListInput:
             return False
         except ValueError:
             return False
-        except Exception:
-            return True
 
 
 class FormFlow:
@@ -245,15 +243,17 @@ class FormFlow:
         else:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
+                initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
+                                         ussd_string=ussd_string)
                 resp = self.invalid_input.format(
-                    menu=_menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                         ussd_string=ussd_string)[4:])
+                    menu=initial_menu[4:])
             elif callable(_menu):
                 resp = self.invalid_input.format(menu=_menu(
                     msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, data={})[4:])
             else:
                 resp = self.invalid_input.format(menu=_menu[4:])
 
+            resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
