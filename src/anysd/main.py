@@ -73,8 +73,10 @@ class ListInput:
         if not isinstance(self.items, list):
             raise ValueError(f'self.items should be of type list, not {self.items.__class__.__name__}')
         if len(self.items) == 0:
-
-            menu = self.empty_list_message
+            if lang:
+                menu = self.empty_list_message.get(lang)
+            else:
+                menu = self.empty_list_message
         else:
             if isinstance(self.items[0], (str, int, float)):
                 rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
