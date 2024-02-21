@@ -417,7 +417,10 @@ class NavigationMenu(Node, NodeMixin):
                     else:
                         raise TranslationError(
                             f"When translation is enabled, `title` should be of type dict. not {self.title.__class__}")
-            self.menu_string = "CON {self.title}:\n" + "\n".join(menu_children_display_strings)
+            if isinstance(self.title, dict):
+                self.menu_string = f"CON {self.title.get(lang)}\n" + "\n".join(menu_children_display_strings)
+            else:
+                self.menu_string = "CON {self.title}:\n" + "\n".join(menu_children_display_strings)
         # if self.show_title: self.menu_string = f'{self.title}\n{self.menu_string[4:] if self.menu_string[0:2] in [
         # "CON", "END"] else self.menu_string}'
 
