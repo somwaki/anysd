@@ -561,11 +561,12 @@ class NavigationController(BaseUSSD):
 
     def get_language(self):
         if self.enable_translation:
-            lang = self.translation_fxn(msisdn=self.msisdn)
+            lang = self.translation_fxn(msisdn=self.msisdn, session_id=self.session_id, ussd_string=self.ussd_string)
             if not lang:
                 raise TranslationError(
                     f'{self.translation_fxn} did not return a language. It returned {lang.__class__.__name__}')
             return lang
+
     def navigate(self, offset=None):
         step = r.hget(self.redis_key, 'FORM_STEP')
         step = int(step) if step is not None else 0
