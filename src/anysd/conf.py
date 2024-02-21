@@ -55,3 +55,7 @@ class ConditionEvaluationError(Exception):
 
 class ConditionResultError(Exception):
     """raised when the condition evaluation function result is not in mapping keys"""
+
+
+class TranslationError(Exception):
+    """raised when translation for selected language cannot be found"""

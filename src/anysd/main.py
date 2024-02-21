@@ -9,7 +9,7 @@ import redis
 from anytree import Node, NodeMixin
 
 from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
-    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc
+    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -46,7 +46,7 @@ def set_var(msisdn, session_id, data):
 
 class ListInput:
 
-    def __init__(self, items: Union[List, callable], title: str, key=None, idx=None, extra=None,
+    def __init__(self, items: Union[List, callable], title: Union[dict, str], key=None, idx=None, extra=None,
                  empty_list_message=None):
         """
         For handling Listable items
@@ -65,8 +65,9 @@ class ListInput:
         self.extra = extra
         self.empty_list_message = empty_list_message
 
-    def get_items(self, msisdn=None, session_id=None, **kwargs):
+    def get_items(self, lang, msisdn=None, session_id=None, **kwargs):
         if callable(self.items):
+            kwargs.update({'lang': lang})
             self.items = self.items(msisdn=msisdn, session_id=session_id, **kwargs)
 
         if not isinstance(self.items, list):
@@ -80,12 +81,21 @@ class ListInput:
                 menu = f'CON {self.title}\n{rsp}'
 
             elif isinstance(self.items[0], dict):
-                rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
-                menu = f'CON {self.title}\n{rsp}'
+                if lang is None:
+                    rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
+                    menu = f'CON {self.title}\n{rsp}'
+                else:
+                    rsp = '\n'.join([f'{idx}. {item[self.key][lang]}' for idx, item in enumerate(self.items, start=1)])
+                    menu = f'CON {self.title.get(lang)}\n{rsp}'
 
             elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
-                rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
-                menu = f'CON {self.title}\n{rsp}'
+
+                if lang is None:
+                    rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
+                    menu = f'CON {self.title}\n{rsp}'
+                else:
+                    rsp = '\n'.join([f'{idx}. {item[idx][lang]}' for idx, item in enumerate(self.items, start=1)])
+                    menu = f'CON {self.title.get(lang)}\n{rsp}'
 
             else:
                 raise ValueError(
@@ -148,7 +158,7 @@ class FormFlow:
     def gather_form_keys(self):
         return [self.form_questions[x]['name'] for x in self.form_questions.keys()]
 
-    def _response(self, current_step, last_input, msisdn, session_id, ussd_string):
+    def _response(self, current_step, last_input, msisdn, session_id, ussd_string, lang):
         skip_validation = False
         valid_last_input = False
 
@@ -244,12 +254,12 @@ class FormFlow:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
                 initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                         ussd_string=ussd_string)
+                                               ussd_string=ussd_string, lang=lang)
                 resp = self.invalid_input.format(
                     menu=initial_menu[4:])
             elif callable(_menu):
                 resp = self.invalid_input.format(menu=_menu(
-                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, data={})[4:])
+                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={})[4:])
             else:
                 resp = self.invalid_input.format(menu=_menu[4:])
 
@@ -257,7 +267,7 @@ class FormFlow:
         # start get the response for next menu
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                          ussd_string=ussd_string)
+                                          ussd_string=ussd_string, lang=lang)
 
         elif callable(resp['menu']):
             data = {}
@@ -267,7 +277,7 @@ class FormFlow:
                 data[self.form_questions[str(current_step + 1)]['name']] = last_input
 
             try:
-                resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, data=data)
+                resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data)
             except TypeError as t:
                 logger.warning(t)
                 raise ImproperlyConfigured(
@@ -278,12 +288,23 @@ class FormFlow:
 
         return resp, _state, valid_last_input
 
-    def get_response(self, current_step, last_input, msisdn, session_id, ussd_string):
+    def get_response(self, current_step, last_input, msisdn, session_id, ussd_string, lang):
         if current_step is None:
             current_step = 1
 
-        _resp, state, valid = self._response(current_step, last_input, msisdn, session_id, ussd_string)
-
+        _resp, state, valid = self._response(
+            current_step=current_step,
+            last_input=last_input,
+            msisdn=msisdn,
+            session_id=session_id,
+            ussd_string=ussd_string,
+            lang=lang
+        )
+        if isinstance(_resp, dict):
+            if lang in _resp.keys():
+                _resp = _resp.copy().get(lang)
+            else:
+                raise
         return _resp, state, valid
 
 
@@ -338,7 +359,7 @@ class ConditionalFlow:
 class NavigationMenu(Node, NodeMixin):
     _ids = count(0)
 
-    def __init__(self, name="", title: str = "", show_title: bool = True, next_form=None, **kwargs):
+    def __init__(self, name="", title: Union[str, dict] = None, show_title: bool = True, next_form=None, **kwargs):
         super().__init__(name, **kwargs)
         self.next_form = next_form
         self.title = title
@@ -353,7 +374,7 @@ class NavigationMenu(Node, NodeMixin):
 
         self.all_ids = next(self._ids)
 
-    def _generate_menu(self, last_input, msisdn, session_id, ussd_string, step=None):
+    def _generate_menu(self, last_input, msisdn, session_id, ussd_string, lang, step=None, ):
         if len(self.children) == 0 and self.next_form is not None:
             # form variable is set but it is not a FormFlow class
             if not isinstance(self.next_form, FormFlow):
@@ -363,7 +384,7 @@ class NavigationMenu(Node, NodeMixin):
             # Here means this Node has no children but has next_form set
 
             _message, _state, valid = getattr(
-                self.next_form, 'get_response')(step, last_input, msisdn, session_id, ussd_string)
+                self.next_form, 'get_response')(step, last_input, msisdn, session_id, ussd_string, lang)
             self.menu_string = _message
             self.form_state = _state
             self.valid_last_input = valid
@@ -379,14 +400,34 @@ class NavigationMenu(Node, NodeMixin):
 
             # Navigating through nodes. Here it means we are at a node which has children. so we will display the
             # children as menu
-            self.menu_string = f"CON {self.title}:\n" + "\n".join(
-                [f"{i.id}. {i.title}" for i in self.children]) if self.children else ""
-
+            self.menu_string = "CON "
+            menu_children_display_strings = []
+            for child in self.children:
+                if lang is None:
+                    menu_children_display_strings.append(f"{child.id}. {child.title}")
+                else:
+                    if isinstance(self.title, dict):
+                        translation_text = child.title.get(lang)
+                        if translation_text is not None:
+                            menu_children_display_strings.append(f"{child.id}. {translation_text}")
+                        else:
+                            raise TranslationError(f"Translation for language {lang} was not found")
+                    else:
+                        raise TranslationError(
+                            f"When translation is enabled, `title` should be of type dict. not {self.title.__class__}")
+            self.menu_string = "CON {self.title}:\n" + "\n".join(menu_children_display_strings)
         # if self.show_title: self.menu_string = f'{self.title}\n{self.menu_string[4:] if self.menu_string[0:2] in [
         # "CON", "END"] else self.menu_string}'
 
-    def get_menu(self, last_input, msisdn, session_id, ussd_string, step=None):
-        self._generate_menu(last_input, msisdn, session_id, ussd_string, step)
+    def get_menu(self, last_input, msisdn, session_id, ussd_string, step=None, lang=None):
+        self._generate_menu(
+            last_input=last_input,
+            msisdn=msisdn,
+            session_id=session_id,
+            ussd_string=ussd_string,
+            lang=lang,
+            step=step
+        )
         return self.menu_string, self.form_state, self.valid_last_input
 
     def _generate_id(self):
@@ -396,10 +437,23 @@ class NavigationMenu(Node, NodeMixin):
 
 
 class NavigationController(BaseUSSD):
-    def __init__(self, home_menu: NavigationMenu, msisdn, session_id, ussd_string):
+    def __init__(
+            self,
+            home_menu: NavigationMenu,
+            msisdn,
+            session_id,
+            ussd_string,
+            enable_translation,
+            get_translation_fxn
+    ):
 
         super().__init__(msisdn, session_id, ussd_string)
         self.home_menu = home_menu
+        self.enable_translation = enable_translation
+        self.translation_fxn = get_translation_fxn
+        if self.enable_translation:
+            if self.translation_fxn is None:
+                raise TranslationError('get_translation_fxn is required if enable_transactions is set to True')
 
     def _path_process(self, path_as_list: list = None, index=1):
         """
@@ -505,6 +559,13 @@ class NavigationController(BaseUSSD):
                 else:
                     logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
 
+    def get_language(self):
+        if self.enable_translation:
+            lang = self.translation_fxn(msisdn=self.msisdn)
+            if not lang:
+                raise TranslationError(
+                    f'{self.translation_fxn} did not return a language. It returned {lang.__class__.__name__}')
+            return lang
     def navigate(self, offset=None):
         step = r.hget(self.redis_key, 'FORM_STEP')
         step = int(step) if step is not None else 0
@@ -537,11 +598,13 @@ class NavigationController(BaseUSSD):
             # logger.info(f"MENU REF: {_menu_ref}  ::  PATH: {path}")
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))
 
+            lang = self.get_language()
             _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(
                 last_input if add_last_input else None,
                 self.msisdn,
                 self.session_id,
                 self.ussd_string,
+                lang=lang,
                 step=step
             )
 
@@ -579,7 +642,7 @@ class NavigationController(BaseUSSD):
 
             resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp and last_resp[:3] in ["CON", "END"] else ""}'
 
-        resp: str = self.format_response(resp)
+        resp: Union[dict, str] = self.format_response(resp)
         logger.info(f'Response :: {resp}')
         return resp
 
