@@ -113,6 +113,8 @@ class ListInput:
 
     def validate(self, key):
         try:
+            if key is None:
+                return False
             key = int(key)
             if key in range(1, len(self.items) + 1):
                 return True
@@ -583,15 +585,15 @@ class NavigationController(BaseUSSD):
         step = int(step) if step is not None else 0
         last_input = self.ussd_string.split("*")[-1]
 
-        # processed_path = self.get_processed_path()
-        processed_path = self.ussd_string.split("*") if self.ussd_string else []
+        processed_path = self.get_processed_path()
+        # processed_path = self.ussd_string.split("*") if self.ussd_string else []
 
         # append current input to processed_path
         # NOTE: when processed_path will be passed through path_navigator function, it will be sanitized to
         # point to the menu
 
-        # if last_input:
-        #     processed_path.append(last_input)
+        if last_input:
+            processed_path.append(last_input)
 
         def _menu(path, add_last_input=True, offset=None):
             pro_path = self.path_processor(path.copy(), offset=offset)
