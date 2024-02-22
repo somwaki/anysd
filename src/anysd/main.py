@@ -235,7 +235,13 @@ class FormFlow:
                 resp = self.form_questions[str(current_step + 1)].copy()
 
                 # increment step here
-                _state['FORM_STEP'] = current_step + 1
+                if 'FORM_STEP' not in _state:
+                    # sometimes we might want the ussd app to modify the step to redirect the user to different part
+                    # of the form. in that case, we don't increment here and instead use user-defined step.
+                    # the developer is responsible for setting any other state info needed to make the ussd work with
+                    # the defined step
+                    _state['FORM_STEP'] = current_step + 1
+
             except ValueError:
                 resp = None
 
