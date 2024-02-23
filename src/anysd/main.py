@@ -311,10 +311,13 @@ class FormFlow:
             lang=lang
         )
         if isinstance(_resp, dict):
-            if lang in _resp.keys():
-                _resp = _resp.copy().get(lang)
-            else:
-                raise
+            if 'menu' in _resp:
+                if lang and lang in _resp.get('menu').keys():
+                    _resp = _resp.copy().get('menu').get(lang)
+                elif lang and lang not in _resp.get('menu').keys():
+                    raise TranslationError(f"'{lang}' not found in menu translations for {_resp['name']}")
+                else:
+                    raise TranslationError('When Translations are enabled, ')
         return _resp, state, valid
 
 
