@@ -3,7 +3,10 @@ import redis
 import os
 
 config_path = os.environ.get("ANYSD_CONFIG_FILE", 'config.yaml')
-config = cfg_load.load(config_path)
+configs = cfg_load.load(config_path)
+
+environment = os.getenv('ENVIRONMENT', 'development')
+config = configs.get(environment)
 
 nav: dict = config.get('navigation')
 if nav and 'back_symbol' in nav:
@@ -16,9 +19,12 @@ if nav and 'home_symbol' in nav:
 else:
     home_symbol = '00'
 
-rc = config['redis']
+rc = config.get('redis')
+if 'connection' in rc:
+    rc = rc.get('connection')
+
 r = redis.Redis(host=rc.get('host', 'localhost'), port=rc.get('port', 6379), charset="utf-8",
-                decode_responses=True, db=rc.get('db', 4))
+                password=rc.get('password', ''), decode_responses=True, db=rc.get('db', 4))
 
 
 class FormBackError(IndexError):
@@ -41,3 +47,15 @@ class ImproperlyConfigured(Exception):
 
 class ParseError(ImproperlyConfigured):
     """parse error when parsing dictionary to create ussd navigation"""
+
+
+class ConditionEvaluationError(Exception):
+    """raised when an error occurs when calling condition evaluation function"""
+
+
+class ConditionResultError(Exception):
+    """raised when the condition evaluation function result is not in mapping keys"""
+
+
+class TranslationError(Exception):
+    """raised when translation for selected language cannot be found"""
