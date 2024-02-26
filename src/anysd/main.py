@@ -194,7 +194,8 @@ class FormFlow:
                     msisdn=msisdn,
                     session_id=session_id,
                     ussd_string=ussd_string,
-                    lang=lang
+                    lang=lang,
+                    last_input=last_input
                 )
 
                 # handle bs logic
@@ -231,7 +232,8 @@ class FormFlow:
                             msisdn=msisdn,
                             session_id=session_id,
                             lang=lang,
-                            ussd_string=ussd_string
+                            ussd_string=ussd_string,
+                            last_input=last_input,
                         )
                     else:
                         _state[_field_name] = last_input
