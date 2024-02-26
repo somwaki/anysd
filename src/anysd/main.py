@@ -104,20 +104,32 @@ class ListInput:
         xtra = '' if self.extra is None else f'\n{self.extra}'
         return f'{menu}{xtra}'
 
-    def get_item(self, idx):
-        if isinstance(idx, int):
-            return self.items[idx - 1]
+    def get_item(self, idx, **kwargs):
+        items_list = self.items  # Use the dynamic items_list
+        if callable(items_list):
+            # If items_list is callable, get the list dynamically
+
+            items_list = items_list(**kwargs)
+
+        if isinstance(idx, int) and 1 <= idx <= len(items_list):
+            return items_list[idx - 1]
         return None
 
-    def validate(self, key):
+    def validate(self, key, **kwargs):
         try:
             if key is None:
                 return False
             key = int(key)
-            if key in range(1, len(self.items) + 1):
+            items_list = self.items  # Use the dynamic items_list
+            if callable(items_list):
+                # If items_list is callable, get the list dynamically
+                items_list = items_list(**kwargs)
+
+            if key in range(1, len(items_list) + 1):
                 return True
             return False
-        except ValueError:
+        except (ValueError, TypeError) as x:
+            logger.exception(x)
             return False
 
 
@@ -177,7 +189,7 @@ class FormFlow:
             # validate last input.
             if self.get_step_type(current_step) == ListInput:
                 list_ref: ListInput = self.get_step_item(current_step)
-                valid_last_input = list_ref.validate(last_input)
+                valid_last_input = list_ref.validate(last_input, msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang)
 
                 # handle bs logic
                 _res = self._validate_last_input(
@@ -208,7 +220,11 @@ class FormFlow:
                 _field_name: str = self.form_questions.get(str(current_step)).get('name')
                 if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
                     if self.get_step_type(current_step) == ListInput:
-                        _state[_field_name] = self.get_step_item(current_step).get_item(last_input)
+                        _state[_field_name] = self.get_step_item(current_step).get_item(
+                            last_input, msisdn=msisdn,
+                            session_id=session_id,
+                            lang=lang, ussd_string=ussd_string
+                        )
                     else:
                         _state[_field_name] = last_input
                 else:
