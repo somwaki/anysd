@@ -189,7 +189,13 @@ class FormFlow:
             # validate last input.
             if self.get_step_type(current_step) == ListInput:
                 list_ref: ListInput = self.get_step_item(current_step)
-                valid_last_input = list_ref.validate(last_input, msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang)
+                valid_last_input = list_ref.validate(
+                    key=last_input,
+                    msisdn=msisdn,
+                    session_id=session_id,
+                    ussd_string=ussd_string,
+                    lang=lang
+                )
 
                 # handle bs logic
                 _res = self._validate_last_input(
@@ -221,9 +227,11 @@ class FormFlow:
                 if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
                     if self.get_step_type(current_step) == ListInput:
                         _state[_field_name] = self.get_step_item(current_step).get_item(
-                            last_input, msisdn=msisdn,
+                            idx=last_input,
+                            msisdn=msisdn,
                             session_id=session_id,
-                            lang=lang, ussd_string=ussd_string
+                            lang=lang,
+                            ussd_string=ussd_string
                         )
                     else:
                         _state[_field_name] = last_input
