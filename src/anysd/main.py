@@ -66,42 +66,40 @@ class ListInput:
         self.empty_list_message = empty_list_message
 
     def get_items(self, lang, msisdn=None, session_id=None, **kwargs):
-        if callable(self.items):
+        items_list = self.items  # Use a separate variable to avoid modifying self.items
+        if callable(items_list):
             kwargs.update({'lang': lang})
-            self.items = self.items(msisdn=msisdn, session_id=session_id, **kwargs)
+            items_list = items_list(msisdn=msisdn, session_id=session_id, **kwargs)
 
-        if not isinstance(self.items, list):
-            raise ValueError(f'self.items should be of type list, not {self.items.__class__.__name__}')
-        if len(self.items) == 0:
+        if not isinstance(items_list, list):
+            raise ValueError(f'self.items should be of type list, not {items_list.__class__.__name__}')
+
+        if len(items_list) == 0:
             if lang:
                 menu = self.empty_list_message.get(lang)
             else:
                 menu = self.empty_list_message
         else:
-            if isinstance(self.items[0], (str, int, float)):
-                rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
+            if isinstance(items_list[0], (str, int, float)):
+                rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(items_list, start=1)])
                 menu = f'CON {self.title}\n{rsp}'
-
-            elif isinstance(self.items[0], dict):
+            elif isinstance(items_list[0], dict):
                 if lang is None:
-                    rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title}\n{rsp}'
                 else:
-                    rsp = '\n'.join([f'{idx}. {item[self.key][lang]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.key][lang]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title.get(lang)}\n{rsp}'
-
-            elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
-
+            elif isinstance(items_list[0], list) or isinstance(items_list[0], tuple):
                 if lang is None:
-                    rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.idx]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title}\n{rsp}'
                 else:
-                    rsp = '\n'.join([f'{idx}. {item[idx][lang]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.idx][lang]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title.get(lang)}\n{rsp}'
-
             else:
                 raise ValueError(
-                    f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
+                    f'self.items should contain items of type str, dict, list or tuple, not {items_list[0].__class__.__name__}')
 
         xtra = '' if self.extra is None else f'\n{self.extra}'
         return f'{menu}{xtra}'
