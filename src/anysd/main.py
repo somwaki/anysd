@@ -8,7 +8,7 @@ from typing import Callable, List, Union
 import redis
 from anytree import Node, NodeMixin
 
-from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
+from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, config, \
     NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
@@ -134,14 +134,19 @@ class ListInput:
 
 
 class FormFlow:
-    # class FormFlow(BaseUSSD):
-    # def __init__(self, form_questions: dict, step_validator: Callable, msisdn, session_id, ussd_string):
     def __init__(self, form_questions: dict, step_validator: Callable):
-
-        # super().__init__(msisdn, session_id, ussd_string)
         self.invalid_input = "CON Invalid input\n{menu}"
         self.form_questions = form_questions
         self.step_validator = step_validator
+
+    def get_invalid_input(self, menu, lang=None):
+        invalid_text = self.invalid_input
+        if lang:
+            invalid_config = config.get('strings').get(
+                'invalid_input') if 'strings' in config and 'invalid_input' in config.get('strings') else None
+            if invalid_config:
+                invalid_text = invalid_config[lang]
+        return invalid_text.format(menu=menu)
 
     def get_step_type(self, step):
         try:
@@ -289,13 +294,12 @@ class FormFlow:
             if isinstance(_menu, ListInput):
                 initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
                                                ussd_string=ussd_string, lang=lang)
-                resp = self.invalid_input.format(
-                    menu=initial_menu[4:])
+                resp = self.get_invalid_input(menu=initial_menu[4:], lang=lang)
             elif callable(_menu):
-                resp = self.invalid_input.format(menu=_menu(
-                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={})[4:])
+                resp = self.get_invalid_input(menu=_menu(
+                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={})[4:], lang=lang)
             else:
-                resp = self.invalid_input.format(menu=_menu[4:])
+                resp = self.get_invalid_input(menu=_menu[4:], lang=lang)
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
@@ -342,6 +346,7 @@ class FormFlow:
                     raise TranslationError(f"'{lang}' not found in menu translations for {_resp['name']}")
                 else:
                     raise TranslationError('When Translations are enabled, ')
+
         return _resp, state, valid
 
 
