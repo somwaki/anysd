@@ -139,7 +139,7 @@ class FormFlow:
         self.form_questions = form_questions
         self.step_validator = step_validator
 
-    def get_invalid_input(self, menu, lang=None):
+    def get_invalid_input(self, menu, lang=None, **kwargs):
         invalid_text = self.invalid_input
         if lang:
             invalid_config = config.get('strings').get(
@@ -233,7 +233,7 @@ class FormFlow:
                 if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
                     if self.get_step_type(current_step) == ListInput:
                         _state[_field_name] = self.get_step_item(current_step).get_item(
-                            idx=last_input,
+                            idx=int(last_input),
                             msisdn=msisdn,
                             session_id=session_id,
                             lang=lang,
@@ -293,19 +293,19 @@ class FormFlow:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
                 initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                               ussd_string=ussd_string, lang=lang)
-                resp = self.get_invalid_input(menu=initial_menu[4:], lang=lang)
+                                               ussd_string=ussd_string, lang=lang, state=_state)
+                resp = self.get_invalid_input(menu=initial_menu[4:], lang=lang, state=_state)
             elif callable(_menu):
                 resp = self.get_invalid_input(menu=_menu(
-                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={})[4:], lang=lang)
+                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state)[4:], lang=lang)
             else:
-                resp = self.get_invalid_input(menu=_menu[4:], lang=lang)
+                resp = self.get_invalid_input(menu=_menu[4:], lang=lang, state=_state)
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                          ussd_string=ussd_string, lang=lang)
+                                          ussd_string=ussd_string, lang=lang, state=_state)
 
         elif callable(resp['menu']):
             data = {}
@@ -315,7 +315,8 @@ class FormFlow:
                 data[self.form_questions[str(current_step + 1)]['name']] = last_input
 
             try:
-                resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data)
+                resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data,
+                                    state=_state)
             except TypeError as t:
                 logger.warning(t)
                 raise ImproperlyConfigured(
@@ -597,7 +598,7 @@ class NavigationController(BaseUSSD):
                     r.hset(self.redis_key, key, state[key])
                 elif type(state[key]) in [dict, tuple, list]:
                     try:
-                        r.hset(self.redis_key, json.dumps(state[key]))
+                        r.hset(self.redis_key, key, json.dumps(state[key]))
                     except Exception as e:
                         logger.warning('Error saving state data to redis: ')
                         logger.warning(e)
