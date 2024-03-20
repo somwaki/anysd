@@ -105,14 +105,15 @@ class ListInput:
         return f'{menu}{xtra}'
 
     def get_item(self, idx, **kwargs):
-        items_list = self.items  # Use the dynamic items_list
-        if callable(items_list):
-            # If items_list is callable, get the list dynamically
+        items_list = self.items
 
+        # items_list if a fxn, call it to get the list
+        if callable(items_list):
             items_list = items_list(**kwargs)
 
         if isinstance(idx, int) and 1 <= idx <= len(items_list):
             return items_list[idx - 1]
+
         return None
 
     def validate(self, key, **kwargs):
@@ -123,7 +124,7 @@ class ListInput:
             items_list = self.items  # Use the dynamic items_list
             if callable(items_list):
                 # If items_list is callable, get the list dynamically
-                items_list = items_list(**kwargs)
+                items_list = items_list(scope='validate', **kwargs)
 
             if key in range(1, len(items_list) + 1):
                 return True
@@ -239,6 +240,7 @@ class FormFlow:
                             lang=lang,
                             ussd_string=ussd_string,
                             last_input=last_input,
+                            scope='select'
                         )
                         _state[_field_name] = field_value
                         set_var(msisdn=msisdn, session_id=session_id, data={
@@ -303,11 +305,11 @@ class FormFlow:
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
                 initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                               ussd_string=ussd_string, lang=lang, state=_state)
+                                               ussd_string=ussd_string, lang=lang, state=_state, scope='menu')
                 resp = self.get_invalid_input(menu=initial_menu[4:], lang=lang, state=_state)
             elif callable(_menu):
                 resp = self.get_invalid_input(menu=_menu(
-                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state)[4:], lang=lang)
+                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state, scope='menu')[4:], lang=lang)
             else:
                 resp = self.get_invalid_input(menu=_menu[4:], lang=lang, state=_state)
 
@@ -315,7 +317,7 @@ class FormFlow:
         # start get the response for next menu
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                          ussd_string=ussd_string, lang=lang, state=_state)
+                                          ussd_string=ussd_string, lang=lang, state=_state, scope='menu')
 
         elif callable(resp['menu']):
             data = {}
@@ -326,11 +328,11 @@ class FormFlow:
 
             try:
                 resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data,
-                                    state=_state)
+                                    state=_state, scope='menu')
             except TypeError as t:
                 logger.warning(t)
                 raise ImproperlyConfigured(
-                    f'The callable{resp["menu"]} should accept at least 4 arguments or accept arbitrary kwargs')
+                    f'The callable{resp["menu"]} should accept arbitrary kwargs')
 
         elif isinstance(resp['menu'], str):
             resp = resp['menu']
