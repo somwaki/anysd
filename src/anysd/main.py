@@ -232,7 +232,7 @@ class FormFlow:
                 _field_name: str = self.form_questions.get(str(current_step)).get('name')
                 if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
                     if self.get_step_type(current_step) == ListInput:
-                        _state[_field_name] = self.get_step_item(current_step).get_item(
+                        field_value = self.get_step_item(current_step).get_item(
                             idx=int(last_input),
                             msisdn=msisdn,
                             session_id=session_id,
@@ -240,7 +240,17 @@ class FormFlow:
                             ussd_string=ussd_string,
                             last_input=last_input,
                         )
+                        _state[_field_name] = field_value
+                        set_var(msisdn=msisdn, session_id=session_id, data={
+                            _field_name: json.dumps(field_value),
+                            f'{_field_name}_VALUE': int(last_input) - 1
+                        })
                     else:
+
+                        set_var(msisdn=msisdn, session_id=session_id, data={
+                            _field_name: last_input,
+                            f'{_field_name}_VALUE': last_input
+                        })
                         _state[_field_name] = last_input
                 else:
                     logger.warning(
@@ -266,7 +276,7 @@ class FormFlow:
                 resp = self.form_questions[str(current_step + 1)].copy()
 
                 # increment step here
-                if 'FORM_STEP' not in _state:
+                if 'FORM_STEP' not in _state or last_input == back_symbol:
                     # sometimes we might want the ussd app to modify the step to redirect the user to different part
                     # of the form. in that case, we don't increment here and instead use user-defined step.
                     # the developer is responsible for setting any other state info needed to make the ussd work with
