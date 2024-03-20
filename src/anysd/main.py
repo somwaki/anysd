@@ -13,7 +13,7 @@ from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackErro
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
-logger = logging.getLogger(__name__)
+universal_logger = logging.getLogger(__name__)
 
 
 class Channels(enum.Enum):
@@ -130,15 +130,15 @@ class ListInput:
                 return True
             return False
         except (ValueError, TypeError) as x:
-            logger.exception(x)
             return False
 
 
 class FormFlow:
-    def __init__(self, form_questions: dict, step_validator: Callable):
+    def __init__(self, form_questions: dict, step_validator: Callable, logger=None):
         self.invalid_input = "CON Invalid input\n{menu}"
         self.form_questions = form_questions
         self.step_validator = step_validator
+        self.logger = universal_logger if logger is None else logger
 
     def get_invalid_input(self, menu, lang=None, **kwargs):
         invalid_text = self.invalid_input
@@ -170,7 +170,8 @@ class FormFlow:
 
         _val, _extra_data = self.step_validator(current_step, last_input, msisdn=msisdn, session_id=session_id)
         if _val is None or not isinstance(_val, bool):
-            logger.warning('Input not validated explicitly by validator function, Default value of True has been used')
+            self.logger.warning(
+                'Input not validated explicitly by validator function, Default value of True has been used')
             _val = True
 
         return _val, _extra_data
@@ -224,7 +225,8 @@ class FormFlow:
                 if isinstance(_xtra_data, dict):
                     _state.update(_xtra_data)
                 else:
-                    logger.warning(f'extra_data from validation should be a dict not {_xtra_data.__class__.__name__}')
+                    self.logger.warning(
+                        f'extra_data from validation should be a dict not {_xtra_data.__class__.__name__}')
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
@@ -255,7 +257,7 @@ class FormFlow:
                         })
                         _state[_field_name] = last_input
                 else:
-                    logger.warning(
+                    self.logger.warning(
                         f'field_name "{_field_name}" is not valid. It should be contain letters, underscores and '
                         f'numbers, but begin with a letter or underscore')
                 # end variable
@@ -294,11 +296,11 @@ class FormFlow:
                     raise FormBackError('Cannot go back beyond this point')
                 elif current_step == len(self.form_questions):
                     msg = 'END Next step not specified'
-                    logger.warning(msg[4:])
+                    self.logger.warning(msg[4:])
                     resp = msg
                 else:
                     msg = 'END Step response not specified'
-                    logger.warning(msg[4:])
+                    self.logger.warning(msg[4:])
                     resp = msg
                 raise
         else:
@@ -309,7 +311,8 @@ class FormFlow:
                 resp = self.get_invalid_input(menu=initial_menu[4:], lang=lang, state=_state)
             elif callable(_menu):
                 resp = self.get_invalid_input(menu=_menu(
-                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state, scope='menu')[4:], lang=lang)
+                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state,
+                    scope='menu')[4:], lang=lang)
             else:
                 resp = self.get_invalid_input(menu=_menu[4:], lang=lang, state=_state)
 
@@ -330,7 +333,7 @@ class FormFlow:
                 resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data,
                                     state=_state, scope='menu')
             except TypeError as t:
-                logger.warning(t)
+                self.logger.warning(t)
                 raise ImproperlyConfigured(
                     f'The callable{resp["menu"]} should accept arbitrary kwargs')
 
@@ -368,12 +371,14 @@ class ConditionalFlow:
             self,
             condition_fxn,
             condition_result_mapping: dict,
-            cache_results=False
+            cache_results=False,
+            logger=None
     ):
 
         self.condition_fxn = condition_fxn
         self.condition_result_mapping = condition_result_mapping
         self.cache_result = cache_results
+        self.logger = logger if logger is not None else universal_logger
 
     def __str__(self):
         return f'{self.condition_fxn}'
@@ -399,7 +404,7 @@ class ConditionalFlow:
         except ConditionResultError:
             raise
         except Exception as x:
-            logger.exception(x)
+            self.logger.exception(x)
             raise ConditionEvaluationError('Error when evaluating conditional function')
         return result
 
@@ -502,13 +507,15 @@ class NavigationController(BaseUSSD):
             session_id,
             ussd_string,
             enable_translation,
-            get_translation_fxn
+            get_translation_fxn,
+            logger=None
     ):
 
         super().__init__(msisdn, session_id, ussd_string)
         self.home_menu = home_menu
         self.enable_translation = enable_translation
         self.translation_fxn = get_translation_fxn
+        self.logger = logger if logger is not None else universal_logger
         if self.enable_translation:
             if self.translation_fxn is None:
                 raise TranslationError('get_translation_fxn is required if enable_transactions is set to True')
@@ -598,7 +605,7 @@ class NavigationController(BaseUSSD):
     def _redis_processing(self, state: dict):
         if state is None:
             return
-        logger.info(f'redis state: {state}')
+        self.logger.debug(f'redis state: {state}')
         del_keys = [key for key in state.keys() if state[key] is None]
         other_keys = [key for key in state.keys() if state[key] is not None]
         if del_keys:
@@ -612,10 +619,10 @@ class NavigationController(BaseUSSD):
                     try:
                         r.hset(self.redis_key, key, json.dumps(state[key]))
                     except Exception as e:
-                        logger.warning('Error saving state data to redis: ')
-                        logger.warning(e)
+                        self.logger.warning('Error saving state data to redis: ')
+                        self.logger.warning(e)
                 else:
-                    logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
+                    self.logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
 
     def get_language(self):
         if self.enable_translation:
@@ -642,7 +649,7 @@ class NavigationController(BaseUSSD):
 
         def _menu(path, add_last_input=True, offset=None):
             pro_path = self.path_processor(path.copy(), offset=offset)
-            logger.info(f"PROCESSED_PATH: {pro_path}")
+            self.logger.debug(f"PROCESSED_PATH: {pro_path}")
 
             data = {
                 'msisdn': self.msisdn,
@@ -653,8 +660,6 @@ class NavigationController(BaseUSSD):
                 'redis_conn': r
             }
             _menu_ref = self.path_navigator(self.home_menu, pro_path.copy(), **data)
-            # path = self.path_to_list(_menu_ref)
-            # logger.info(f"MENU REF: {_menu_ref}  ::  PATH: {path}")
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))
 
             lang = self.get_language()
@@ -702,7 +707,7 @@ class NavigationController(BaseUSSD):
             resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp and last_resp[:3] in ["CON", "END"] else ""}'
 
         resp: Union[dict, str] = self.format_response(resp)
-        logger.info(f'Response :: {resp}')
+        self.logger.debug(f'Response :: {resp}')
         return resp
 
     def get_processed_path(self):
@@ -712,8 +717,8 @@ class NavigationController(BaseUSSD):
         try:
             processed_path = json.loads(processed_path)
         except Exception as e:
-            logger.warning("invalid processed path variable... ")
-            logger.warning(e)
+            self.logger.warning("invalid processed path variable... ")
+            self.logger.warning(e)
             processed_path = []
         return processed_path
 
@@ -723,6 +728,6 @@ class NavigationController(BaseUSSD):
         for item in items:
             kwargs[item] = r.hget(self.redis_key, item)
 
-        logger.info(f'KWARGS :: {kwargs}')
+        self.logger.debug(f'KWARGS :: {kwargs}')
         resp = resp.format(**kwargs)
         return resp
