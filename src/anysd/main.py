@@ -147,6 +147,9 @@ class FormFlow:
                 'invalid_input') if 'strings' in config and 'invalid_input' in config.get('strings') else None
             if invalid_config:
                 invalid_text = invalid_config[lang]
+        
+        if isinstance(menu, dict):
+            menu = menu.get(lang)
         return invalid_text.format(menu=menu)
 
     def get_step_type(self, step):
@@ -314,7 +317,7 @@ class FormFlow:
                     msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state,
                     scope='menu')[4:], lang=lang)
             else:
-                resp = self.get_invalid_input(menu=_menu[4:], lang=lang, state=_state)
+                resp = self.get_invalid_input(menu=_menu, lang=lang, state=_state)
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
