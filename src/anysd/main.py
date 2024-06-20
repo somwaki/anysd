@@ -248,6 +248,7 @@ class FormFlow:
                             scope='select'
                         )
                         _state[_field_name] = field_value
+                        _state[f'{_field_name}_VALUE'] = int(last_input) - 1
                         set_var(msisdn=msisdn, session_id=session_id, data={
                             _field_name: json.dumps(field_value),
                             f'{_field_name}_VALUE': int(last_input) - 1
@@ -259,6 +260,7 @@ class FormFlow:
                             f'{_field_name}_VALUE': last_input
                         })
                         _state[_field_name] = last_input
+                        _state[f'{_field_name}_VALUE'] = int(last_input) - 1
                 else:
                     self.logger.warning(
                         f'field_name "{_field_name}" is not valid. It should be contain letters, underscores and '
