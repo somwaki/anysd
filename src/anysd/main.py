@@ -233,6 +233,7 @@ class FormFlow:
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
+            _state['USSD_VALID_LAST_INPUT'] = 1
             if last_input not in [back_symbol, home_symbol] and current_step != 0:
                 # setting last input as variable to be saved in redis
                 _field_name: str = self.form_questions.get(str(current_step)).get('name')
@@ -309,6 +310,7 @@ class FormFlow:
                     resp = msg
                 raise
         else:
+            _state['USSD_VALID_LAST_INPUT'] = 0
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
                 initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
@@ -323,6 +325,7 @@ class FormFlow:
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
+        _state['USSD_RESPONSE_MENU_NAME'] = resp.get('name')
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
                                           ussd_string=ussd_string, lang=lang, state=_state, scope='menu')
@@ -459,7 +462,7 @@ class NavigationMenu(Node, NodeMixin):
             raise ValueError("Either children or next_form should be set to define next action")
 
         else:
-            self.form_state = {'FORM_STEP': None}
+            self.form_state = {'FORM_STEP': None, 'USSD_RESPONSE_MENU_NAME': f"{self.name}".upper()}
             if last_input == back_symbol:
                 raise NavigationBackError('We are at home')
 
@@ -666,6 +669,7 @@ class NavigationController(BaseUSSD):
             }
             _menu_ref = self.path_navigator(self.home_menu, pro_path.copy(), **data)
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))
+            r.hset(self.redis_key, 'USSD_VALID_LAST_INPUT', 1)
 
             lang = self.get_language()
             _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(
@@ -708,7 +712,7 @@ class NavigationController(BaseUSSD):
             r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
         except NavigationInvalidChoice:
             last_resp = r.hget(self.redis_key, "LAST_SUCCESS_RESPONSE")
-
+            set_var(msisdn=self.msisdn, session_id=self.session_id, data={'USSD_VALID_LAST_INPUT': 0})
             resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp and last_resp[:3] in ["CON", "END"] else ""}'
 
         resp: Union[dict, str] = self.format_response(resp)
