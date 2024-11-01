@@ -1,5 +1,6 @@
 import enum
 import json
+import os
 import logging
 import string
 from itertools import count
@@ -9,7 +10,8 @@ import redis
 from anytree import Node, NodeMixin
 
 from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, config, \
-    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError
+    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError, \
+    global_var_key
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -27,6 +29,7 @@ class BaseUSSD:
         self.msisdn = msisdn
         self.session_id = session_id
         self.redis_key = f"{self.msisdn}:{self.session_id}"
+        self.redis_global_key =f'GLOBAL:{msisdn}:{session_id}'
         self.r = redis.Redis(**rc)
         self.ussd_string = ussd_string
         self.last_input = self.ussd_string.split("*")[-1]
@@ -42,6 +45,31 @@ def get_var(msisdn, session_id, var):
 
 def set_var(msisdn, session_id, data):
     return r.hset(f'{msisdn}:{session_id}', mapping=data)
+
+def set_global_var(msisdn, session_id, data: dict=None, key=None, value=None):
+    redis_key = f'{msisdn}:{session_id}'
+    if data:
+        if not isinstance(data, dict): 
+            raise ImproperlyConfigured(f'data should be a dictionary. Not a {data.__class__.__name__}')
+    
+    current = r.hget(redis_key, global_var_key) or '{}'
+    current_object = json.loads(current)
+
+    if data:
+        current_object.update(data)
+    
+    else:
+        current_object[key] = value
+
+    r.hset(redis_key, global_var_key, json.dumps(current_object))
+    pass
+
+def get_global_var(msisdn, session_id, key):
+
+    current = r.hget(f'{msisdn}:{session_id}', global_var_key)
+    current_object = json.loads(current)
+
+    return current_object.get(key, None)
 
 
 class ListInput:
@@ -731,12 +759,37 @@ class NavigationController(BaseUSSD):
             processed_path = []
         return processed_path
 
-    def format_response(self, resp):
-        items = [tup[1] for tup in string.Formatter().parse(resp) if tup[1] is not None]
+    def get_global_variables(self, items):
+        kwargs = {}
+        for item in items:
+            kwargs[item] = get_global_var(self.msisdn, self.session_id, item)
+        return kwargs
+
+    def get_local_variables(self, items):
         kwargs = {}
         for item in items:
             kwargs[item] = r.hget(self.redis_key, item)
+        
+        return kwargs
 
-        self.logger.debug(f'KWARGS :: {kwargs}')
+    def format_response(self, resp):
+        items = [tup[1] for tup in string.Formatter().parse(resp) if tup[1] is not None]
+        
+        local_variables = self.get_local_variables(items)
+        self.logger.debug(f'LOCAL VARIABLES :: {local_variables}')
+
+        global_variables = self.get_global_variables(items)
+        self.logger.debug(f'GLOBAL VARIABLES :: {global_variables}')
+        
+        if os.getenv('VARIABLE_SUBSTITUTION_PRECEDENCE', 'local') == 'local':
+            local_variables = {k: v for k, v in local_variables.items() if v is not None} 
+            global_variables.update(local_variables)
+            kwargs = global_variables
+
+        else:
+            global_variables = {k: v for k, v in global_variables.items() if v is not None} 
+            local_variables.update(global_variables)
+            kwargs = local_variables
+            
         resp = resp.format(**kwargs)
         return resp
