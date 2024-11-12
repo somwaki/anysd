@@ -1,5 +1,6 @@
 import enum
 import json
+import os
 import logging
 import string
 from itertools import count
@@ -8,12 +9,13 @@ from typing import Callable, List, Union
 import redis
 from anytree import Node, NodeMixin
 
-from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, \
-    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError
+from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, config, \
+    NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError, \
+    global_var_key
 
 LOG_FORMAT = '%(asctime)s %(levelname)-6s %(funcName)s (on line %(lineno)-4d) : %(message)s'
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
-logger = logging.getLogger(__name__)
+universal_logger = logging.getLogger(__name__)
 
 
 class Channels(enum.Enum):
@@ -27,6 +29,7 @@ class BaseUSSD:
         self.msisdn = msisdn
         self.session_id = session_id
         self.redis_key = f"{self.msisdn}:{self.session_id}"
+        self.redis_global_key =f'GLOBAL:{msisdn}:{session_id}'
         self.r = redis.Redis(**rc)
         self.ussd_string = ussd_string
         self.last_input = self.ussd_string.split("*")[-1]
@@ -42,6 +45,31 @@ def get_var(msisdn, session_id, var):
 
 def set_var(msisdn, session_id, data):
     return r.hset(f'{msisdn}:{session_id}', mapping=data)
+
+def set_global_var(msisdn, session_id, data: dict=None, key=None, value=None):
+    redis_key = f'{msisdn}:{session_id}'
+    if data:
+        if not isinstance(data, dict): 
+            raise ImproperlyConfigured(f'data should be a dictionary. Not a {data.__class__.__name__}')
+    
+    current = r.hget(redis_key, global_var_key) or '{}'
+    current_object = json.loads(current)
+
+    if data:
+        current_object.update(data)
+    
+    else:
+        current_object[key] = value
+
+    r.hset(redis_key, global_var_key, json.dumps(current_object))
+    pass
+
+def get_global_var(msisdn, session_id, key):
+
+    current = r.hget(f'{msisdn}:{session_id}', global_var_key)
+    current_object = json.loads(current)
+
+    return current_object.get(key, None)
 
 
 class ListInput:
@@ -66,72 +94,91 @@ class ListInput:
         self.empty_list_message = empty_list_message
 
     def get_items(self, lang, msisdn=None, session_id=None, **kwargs):
-        if callable(self.items):
+        items_list = self.items  # Use a separate variable to avoid modifying self.items
+        if callable(items_list):
             kwargs.update({'lang': lang})
-            self.items = self.items(msisdn=msisdn, session_id=session_id, **kwargs)
+            items_list = items_list(msisdn=msisdn, session_id=session_id, **kwargs)
 
-        if not isinstance(self.items, list):
-            raise ValueError(f'self.items should be of type list, not {self.items.__class__.__name__}')
-        if len(self.items) == 0:
+        if not isinstance(items_list, list):
+            raise ValueError(f'self.items should be of type list, not {items_list.__class__.__name__}')
+
+        if len(items_list) == 0:
             if lang:
                 menu = self.empty_list_message.get(lang)
             else:
                 menu = self.empty_list_message
         else:
-            if isinstance(self.items[0], (str, int, float)):
-                rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(self.items, start=1)])
+            if isinstance(items_list[0], (str, int, float)):
+                rsp = '\n'.join([f'{idx}. {str(item)}' for idx, item in enumerate(items_list, start=1)])
                 menu = f'CON {self.title}\n{rsp}'
-
-            elif isinstance(self.items[0], dict):
+            elif isinstance(items_list[0], dict):
                 if lang is None:
-                    rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.key]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title}\n{rsp}'
                 else:
-                    rsp = '\n'.join([f'{idx}. {item[self.key][lang]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.key][lang]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title.get(lang)}\n{rsp}'
-
-            elif isinstance(self.items[0], list) or isinstance(self.items[0], tuple):
-
+            elif isinstance(items_list[0], list) or isinstance(items_list[0], tuple):
                 if lang is None:
-                    rsp = '\n'.join([f'{idx}. {item[idx]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.idx]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title}\n{rsp}'
                 else:
-                    rsp = '\n'.join([f'{idx}. {item[idx][lang]}' for idx, item in enumerate(self.items, start=1)])
+                    rsp = '\n'.join([f'{idx}. {item[self.idx][lang]}' for idx, item in enumerate(items_list, start=1)])
                     menu = f'CON {self.title.get(lang)}\n{rsp}'
-
             else:
                 raise ValueError(
-                    f'self.items should contain items of type str, dict, list or tuple, not {self.items[0].__class__.__name__}')
+                    f'self.items should contain items of type str, dict, list or tuple, not {items_list[0].__class__.__name__}')
 
         xtra = '' if self.extra is None else f'\n{self.extra}'
         return f'{menu}{xtra}'
 
-    def get_item(self, idx):
-        if isinstance(idx, int):
-            return self.items[idx - 1]
+    def get_item(self, idx, **kwargs):
+        items_list = self.items
+
+        # items_list if a fxn, call it to get the list
+        if callable(items_list):
+            items_list = items_list(**kwargs)
+
+        if isinstance(idx, int) and 1 <= idx <= len(items_list):
+            return items_list[idx - 1]
+
         return None
 
-    def validate(self, key):
+    def validate(self, key, **kwargs):
         try:
             if key is None:
                 return False
             key = int(key)
-            if key in range(1, len(self.items) + 1):
+            items_list = self.items  # Use the dynamic items_list
+            if callable(items_list):
+                # If items_list is callable, get the list dynamically
+                items_list = items_list(scope='validate', **kwargs)
+
+            if key in range(1, len(items_list) + 1):
                 return True
             return False
-        except ValueError:
+        except (ValueError, TypeError) as x:
             return False
 
 
 class FormFlow:
-    # class FormFlow(BaseUSSD):
-    # def __init__(self, form_questions: dict, step_validator: Callable, msisdn, session_id, ussd_string):
-    def __init__(self, form_questions: dict, step_validator: Callable):
-
-        # super().__init__(msisdn, session_id, ussd_string)
+    def __init__(self, form_questions: dict, step_validator: Callable, logger=None):
         self.invalid_input = "CON Invalid input\n{menu}"
         self.form_questions = form_questions
         self.step_validator = step_validator
+        self.logger = universal_logger if logger is None else logger
+
+    def get_invalid_input(self, menu, lang=None, **kwargs):
+        invalid_text = self.invalid_input
+        if lang:
+            invalid_config = config.get('strings').get(
+                'invalid_input') if 'strings' in config and 'invalid_input' in config.get('strings') else None
+            if invalid_config:
+                invalid_text = invalid_config[lang]
+        
+        if isinstance(menu, dict):
+            menu = menu.get(lang)
+        return invalid_text.format(menu=menu)
 
     def get_step_type(self, step):
         try:
@@ -146,15 +193,16 @@ class FormFlow:
     def call_post_validation(self):
         pass
 
-    def _validate_last_input(self, current_step, last_input, msisdn, session_id):
+    def _validate_last_input(self, current_step, last_input, msisdn, session_id, *args, **kwargs):
         """
         validate by using if...else, for all steps in this flow
         :return:
         """
 
-        _val, _extra_data = self.step_validator(current_step, last_input, msisdn=msisdn, session_id=session_id)
+        _val, _extra_data = self.step_validator(current_step, last_input, msisdn=msisdn, session_id=session_id, *args, **kwargs)
         if _val is None or not isinstance(_val, bool):
-            logger.warning('Input not validated explicitly by validator function, Default value of True has been used')
+            self.logger.warning(
+                'Input not validated explicitly by validator function, Default value of True has been used')
             _val = True
 
         return _val, _extra_data
@@ -179,11 +227,18 @@ class FormFlow:
             # validate last input.
             if self.get_step_type(current_step) == ListInput:
                 list_ref: ListInput = self.get_step_item(current_step)
-                valid_last_input = list_ref.validate(last_input)
+                valid_last_input = list_ref.validate(
+                    key=last_input,
+                    msisdn=msisdn,
+                    session_id=session_id,
+                    ussd_string=ussd_string,
+                    lang=lang,
+                    last_input=last_input
+                )
 
                 # handle bs logic
                 _res = self._validate_last_input(
-                    current_step, last_input, msisdn=msisdn, session_id=session_id)
+                    current_step, last_input, msisdn=msisdn, session_id=session_id, step_info=self.form_questions.get(str(current_step), {}).copy())
 
                 if isinstance(_res, tuple) and len(_res) == 2:
                     _xtra_data = _res[1]
@@ -195,26 +250,48 @@ class FormFlow:
                         f" Not {_res.__class__.__name__}")
             else:
                 valid_last_input, _xtra_data = self._validate_last_input(
-                    current_step, last_input, msisdn=msisdn, session_id=session_id)
+                    current_step, last_input, msisdn=msisdn, session_id=session_id, step_info=self.form_questions.get(str(current_step), {}).copy())
 
             if _xtra_data is not None:
                 if isinstance(_xtra_data, dict):
                     _state.update(_xtra_data)
                 else:
-                    logger.warning(f'extra_data from validation should be a dict not {_xtra_data.__class__.__name__}')
+                    self.logger.warning(
+                        f'extra_data from validation should be a dict not {_xtra_data.__class__.__name__}')
 
         # if last input is valid, display next menu, otherwise, show invalid input message, and display same menu
         if valid_last_input:
+            _state['USSD_VALID_LAST_INPUT'] = 1
             if last_input not in [back_symbol, home_symbol] and current_step != 0:
                 # setting last input as variable to be saved in redis
                 _field_name: str = self.form_questions.get(str(current_step)).get('name')
                 if _field_name and _field_name.replace("_", "").isalnum() and not _field_name[0].isnumeric():
                     if self.get_step_type(current_step) == ListInput:
-                        _state[_field_name] = self.get_step_item(current_step).get_item(last_input)
+                        field_value = self.get_step_item(current_step).get_item(
+                            idx=int(last_input),
+                            msisdn=msisdn,
+                            session_id=session_id,
+                            lang=lang,
+                            ussd_string=ussd_string,
+                            last_input=last_input,
+                            scope='select'
+                        )
+                        _state[_field_name] = field_value
+                        _state[f'{_field_name}_VALUE'] = int(last_input) - 1
+                        set_var(msisdn=msisdn, session_id=session_id, data={
+                            _field_name: json.dumps(field_value),
+                            f'{_field_name}_VALUE': int(last_input) - 1
+                        })
                     else:
+
+                        set_var(msisdn=msisdn, session_id=session_id, data={
+                            _field_name: last_input,
+                            f'{_field_name}_VALUE': last_input
+                        })
                         _state[_field_name] = last_input
+                        _state[f'{_field_name}_VALUE'] = int(last_input) - 1
                 else:
-                    logger.warning(
+                    self.logger.warning(
                         f'field_name "{_field_name}" is not valid. It should be contain letters, underscores and '
                         f'numbers, but begin with a letter or underscore')
                 # end variable
@@ -237,7 +314,7 @@ class FormFlow:
                 resp = self.form_questions[str(current_step + 1)].copy()
 
                 # increment step here
-                if 'FORM_STEP' not in _state:
+                if 'FORM_STEP' not in _state or last_input == back_symbol:
                     # sometimes we might want the ussd app to modify the step to redirect the user to different part
                     # of the form. in that case, we don't increment here and instead use user-defined step.
                     # the developer is responsible for setting any other state info needed to make the ussd work with
@@ -253,31 +330,33 @@ class FormFlow:
                     raise FormBackError('Cannot go back beyond this point')
                 elif current_step == len(self.form_questions):
                     msg = 'END Next step not specified'
-                    logger.warning(msg[4:])
+                    self.logger.warning(msg[4:])
                     resp = msg
                 else:
                     msg = 'END Step response not specified'
-                    logger.warning(msg[4:])
+                    self.logger.warning(msg[4:])
                     resp = msg
                 raise
         else:
+            _state['USSD_VALID_LAST_INPUT'] = 0
             _menu = self.form_questions[str(current_step)]['menu']
             if isinstance(_menu, ListInput):
                 initial_menu = _menu.get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                               ussd_string=ussd_string, lang=lang)
-                resp = self.invalid_input.format(
-                    menu=initial_menu[4:])
+                                               ussd_string=ussd_string, lang=lang, state=_state, scope='menu')
+                resp = self.get_invalid_input(menu=initial_menu[4:], lang=lang, state=_state)
             elif callable(_menu):
-                resp = self.invalid_input.format(menu=_menu(
-                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={})[4:])
+                resp = self.get_invalid_input(menu=_menu(
+                    msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state,
+                    scope='menu')[4:], lang=lang)
             else:
-                resp = self.invalid_input.format(menu=_menu[4:])
+                resp = self.get_invalid_input(menu=_menu, lang=lang, state=_state)
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
+        _state['USSD_RESPONSE_MENU_NAME'] = resp.get('name')
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
-                                          ussd_string=ussd_string, lang=lang)
+                                          ussd_string=ussd_string, lang=lang, state=_state, scope='menu')
 
         elif callable(resp['menu']):
             data = {}
@@ -287,11 +366,12 @@ class FormFlow:
                 data[self.form_questions[str(current_step + 1)]['name']] = last_input
 
             try:
-                resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data)
+                resp = resp['menu'](msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data=data,
+                                    state=_state, scope='menu')
             except TypeError as t:
-                logger.warning(t)
+                self.logger.warning(t)
                 raise ImproperlyConfigured(
-                    f'The callable{resp["menu"]} should accept at least 4 arguments or accept arbitrary kwargs')
+                    f'The callable{resp["menu"]} should accept arbitrary kwargs')
 
         elif isinstance(resp['menu'], str):
             resp = resp['menu']
@@ -318,6 +398,7 @@ class FormFlow:
                     raise TranslationError(f"'{lang}' not found in menu translations for {_resp['name']}")
                 else:
                     raise TranslationError('When Translations are enabled, ')
+
         return _resp, state, valid
 
 
@@ -326,12 +407,14 @@ class ConditionalFlow:
             self,
             condition_fxn,
             condition_result_mapping: dict,
-            cache_results=False
+            cache_results=False,
+            logger=None
     ):
 
         self.condition_fxn = condition_fxn
         self.condition_result_mapping = condition_result_mapping
         self.cache_result = cache_results
+        self.logger = logger if logger is not None else universal_logger
 
     def __str__(self):
         return f'{self.condition_fxn}'
@@ -357,7 +440,7 @@ class ConditionalFlow:
         except ConditionResultError:
             raise
         except Exception as x:
-            logger.exception(x)
+            self.logger.exception(x)
             raise ConditionEvaluationError('Error when evaluating conditional function')
         return result
 
@@ -407,7 +490,7 @@ class NavigationMenu(Node, NodeMixin):
             raise ValueError("Either children or next_form should be set to define next action")
 
         else:
-            self.form_state = {'FORM_STEP': None}
+            self.form_state = {'FORM_STEP': None, 'USSD_RESPONSE_MENU_NAME': f"{self.name}".upper()}
             if last_input == back_symbol:
                 raise NavigationBackError('We are at home')
 
@@ -460,13 +543,15 @@ class NavigationController(BaseUSSD):
             session_id,
             ussd_string,
             enable_translation,
-            get_translation_fxn
+            get_translation_fxn,
+            logger=None
     ):
 
         super().__init__(msisdn, session_id, ussd_string)
         self.home_menu = home_menu
         self.enable_translation = enable_translation
         self.translation_fxn = get_translation_fxn
+        self.logger = logger if logger is not None else universal_logger
         if self.enable_translation:
             if self.translation_fxn is None:
                 raise TranslationError('get_translation_fxn is required if enable_transactions is set to True')
@@ -556,7 +641,7 @@ class NavigationController(BaseUSSD):
     def _redis_processing(self, state: dict):
         if state is None:
             return
-        logger.info(f'redis state: {state}')
+        self.logger.debug(f'redis state: {state}')
         del_keys = [key for key in state.keys() if state[key] is None]
         other_keys = [key for key in state.keys() if state[key] is not None]
         if del_keys:
@@ -568,12 +653,12 @@ class NavigationController(BaseUSSD):
                     r.hset(self.redis_key, key, state[key])
                 elif type(state[key]) in [dict, tuple, list]:
                     try:
-                        r.hset(self.redis_key, json.dumps(state[key]))
+                        r.hset(self.redis_key, key, json.dumps(state[key]))
                     except Exception as e:
-                        logger.warning('Error saving state data to redis: ')
-                        logger.warning(e)
+                        self.logger.warning('Error saving state data to redis: ')
+                        self.logger.warning(e)
                 else:
-                    logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
+                    self.logger.warning(f"cannot save data of type {state[key].__class__.__name__} to redis")
 
     def get_language(self):
         if self.enable_translation:
@@ -600,7 +685,7 @@ class NavigationController(BaseUSSD):
 
         def _menu(path, add_last_input=True, offset=None):
             pro_path = self.path_processor(path.copy(), offset=offset)
-            logger.info(f"PROCESSED_PATH: {pro_path}")
+            self.logger.debug(f"PROCESSED_PATH: {pro_path}")
 
             data = {
                 'msisdn': self.msisdn,
@@ -611,9 +696,8 @@ class NavigationController(BaseUSSD):
                 'redis_conn': r
             }
             _menu_ref = self.path_navigator(self.home_menu, pro_path.copy(), **data)
-            # path = self.path_to_list(_menu_ref)
-            # logger.info(f"MENU REF: {_menu_ref}  ::  PATH: {path}")
             r.hset(self.redis_key, 'PROCESSED_PATH', json.dumps(pro_path))
+            r.hset(self.redis_key, 'USSD_VALID_LAST_INPUT', 1)
 
             lang = self.get_language()
             _resp, _state, valid_input, = getattr(_menu_ref, 'get_menu')(
@@ -656,11 +740,11 @@ class NavigationController(BaseUSSD):
             r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
         except NavigationInvalidChoice:
             last_resp = r.hget(self.redis_key, "LAST_SUCCESS_RESPONSE")
-
+            set_var(msisdn=self.msisdn, session_id=self.session_id, data={'USSD_VALID_LAST_INPUT': 0})
             resp = f'CON Invalid Choice\n{last_resp[4:] if last_resp and last_resp[:3] in ["CON", "END"] else ""}'
 
         resp: Union[dict, str] = self.format_response(resp)
-        logger.info(f'Response :: {resp}')
+        self.logger.debug(f'Response :: {resp}')
         return resp
 
     def get_processed_path(self):
@@ -670,17 +754,42 @@ class NavigationController(BaseUSSD):
         try:
             processed_path = json.loads(processed_path)
         except Exception as e:
-            logger.warning("invalid processed path variable... ")
-            logger.warning(e)
+            self.logger.warning("invalid processed path variable... ")
+            self.logger.warning(e)
             processed_path = []
         return processed_path
 
-    def format_response(self, resp):
-        items = [tup[1] for tup in string.Formatter().parse(resp) if tup[1] is not None]
+    def get_global_variables(self, items):
+        kwargs = {}
+        for item in items:
+            kwargs[item] = get_global_var(self.msisdn, self.session_id, item)
+        return kwargs
+
+    def get_local_variables(self, items):
         kwargs = {}
         for item in items:
             kwargs[item] = r.hget(self.redis_key, item)
+        
+        return kwargs
 
-        logger.info(f'KWARGS :: {kwargs}')
+    def format_response(self, resp):
+        items = [tup[1] for tup in string.Formatter().parse(resp) if tup[1] is not None]
+        
+        local_variables = self.get_local_variables(items)
+        self.logger.debug(f'LOCAL VARIABLES :: {local_variables}')
+
+        global_variables = self.get_global_variables(items)
+        self.logger.debug(f'GLOBAL VARIABLES :: {global_variables}')
+        
+        if os.getenv('VARIABLE_SUBSTITUTION_PRECEDENCE', 'local') == 'local':
+            local_variables = {k: v for k, v in local_variables.items() if v is not None} 
+            global_variables.update(local_variables)
+            kwargs = global_variables
+
+        else:
+            global_variables = {k: v for k, v in global_variables.items() if v is not None} 
+            local_variables.update(global_variables)
+            kwargs = local_variables
+            
         resp = resp.format(**kwargs)
         return resp

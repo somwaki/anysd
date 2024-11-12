@@ -59,3 +59,6 @@ class ConditionResultError(Exception):
 
 class TranslationError(Exception):
     """raised when translation for selected language cannot be found"""
+
+
+global_var_key = os.getenv('GLOBAL_VARIABLES_NAME', 'GLOBAL_VARIABLES')
