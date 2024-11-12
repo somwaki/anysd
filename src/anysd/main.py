@@ -193,13 +193,13 @@ class FormFlow:
     def call_post_validation(self):
         pass
 
-    def _validate_last_input(self, current_step, last_input, msisdn, session_id):
+    def _validate_last_input(self, current_step, last_input, msisdn, session_id, *args, **kwargs):
         """
         validate by using if...else, for all steps in this flow
         :return:
         """
 
-        _val, _extra_data = self.step_validator(current_step, last_input, msisdn=msisdn, session_id=session_id)
+        _val, _extra_data = self.step_validator(current_step, last_input, msisdn=msisdn, session_id=session_id, *args, **kwargs)
         if _val is None or not isinstance(_val, bool):
             self.logger.warning(
                 'Input not validated explicitly by validator function, Default value of True has been used')
@@ -238,7 +238,7 @@ class FormFlow:
 
                 # handle bs logic
                 _res = self._validate_last_input(
-                    current_step, last_input, msisdn=msisdn, session_id=session_id)
+                    current_step, last_input, msisdn=msisdn, session_id=session_id, step_info=self.form_questions.get(str(current_step), {}).copy())
 
                 if isinstance(_res, tuple) and len(_res) == 2:
                     _xtra_data = _res[1]
@@ -250,7 +250,7 @@ class FormFlow:
                         f" Not {_res.__class__.__name__}")
             else:
                 valid_last_input, _xtra_data = self._validate_last_input(
-                    current_step, last_input, msisdn=msisdn, session_id=session_id)
+                    current_step, last_input, msisdn=msisdn, session_id=session_id, step_info=self.form_questions.get(str(current_step), {}).copy())
 
             if _xtra_data is not None:
                 if isinstance(_xtra_data, dict):
