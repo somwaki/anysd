@@ -355,6 +355,10 @@ class FormFlow:
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
+        
+        # to get language before next menu
+        lang = get_var(msisdn=msisdn, session_id=session_id, var=os.getenv('SELECTED_LANGUAGE_KEY', 'SELECTED_LANGUAGE'))
+        
         _state['USSD_RESPONSE_MENU_NAME'] = resp.get('name')
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
