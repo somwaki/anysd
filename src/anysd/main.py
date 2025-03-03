@@ -53,6 +53,8 @@ def set_global_var(msisdn, session_id, data: dict=None, key=None, value=None):
             raise ImproperlyConfigured(f'data should be a dictionary. Not a {data.__class__.__name__}')
     
     current = r.hget(redis_key, global_var_key) or '{}'
+    if not current: 
+        current = '{}'
     current_object = json.loads(current)
 
     if data:
@@ -66,7 +68,7 @@ def set_global_var(msisdn, session_id, data: dict=None, key=None, value=None):
 
 def get_global_var(msisdn, session_id, key):
 
-    current = r.hget(f'{msisdn}:{session_id}', global_var_key)
+    current = r.hget(f'{msisdn}:{session_id}', global_var_key) or "{}"
     current_object = json.loads(current)
 
     return current_object.get(key, None)
@@ -289,7 +291,7 @@ class FormFlow:
                             f'{_field_name}_VALUE': last_input
                         })
                         _state[_field_name] = last_input
-                        _state[f'{_field_name}_VALUE'] = int(last_input) - 1
+                        _state[f'{_field_name}_VALUE'] = last_input
                 else:
                     self.logger.warning(
                         f'field_name "{_field_name}" is not valid. It should be contain letters, underscores and '
@@ -353,6 +355,10 @@ class FormFlow:
 
             resp = {'name': 'ERROR', 'menu': resp}
         # start get the response for next menu
+        
+        # to get language before next menu
+        lang = get_var(msisdn=msisdn, session_id=session_id, var=os.getenv('SELECTED_LANGUAGE_KEY', 'SELECTED_LANGUAGE'))
+        
         _state['USSD_RESPONSE_MENU_NAME'] = resp.get('name')
         if isinstance(resp['menu'], ListInput):
             resp = resp['menu'].get_items(msisdn=msisdn, session_id=session_id, last_input=last_input,
@@ -514,7 +520,7 @@ class NavigationMenu(Node, NodeMixin):
             if isinstance(self.title, dict):
                 self.menu_string = f"CON {self.title.get(lang)}\n" + "\n".join(menu_children_display_strings)
             else:
-                self.menu_string = "CON {self.title}:\n" + "\n".join(menu_children_display_strings)
+                self.menu_string = f"CON {self.title}:\n" + "\n".join(menu_children_display_strings)
         # if self.show_title: self.menu_string = f'{self.title}\n{self.menu_string[4:] if self.menu_string[0:2] in [
         # "CON", "END"] else self.menu_string}'
 
@@ -542,8 +548,8 @@ class NavigationController(BaseUSSD):
             msisdn,
             session_id,
             ussd_string,
-            enable_translation,
-            get_translation_fxn,
+            enable_translation=False,
+            get_translation_fxn=None,
             logger=None
     ):
 
