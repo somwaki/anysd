@@ -61,4 +61,9 @@ class TranslationError(Exception):
     """raised when translation for selected language cannot be found"""
 
 
+class RedirectError(Exception):
+    """raised to do a form redirect"""
+    pass
+
+
 global_var_key = os.getenv('GLOBAL_VARIABLES_NAME', 'GLOBAL_VARIABLES')
