@@ -215,7 +215,6 @@ class FormFlow:
     def _response(self, current_step, last_input, msisdn, session_id, ussd_string, lang):
         skip_validation = False
         valid_last_input = False
-        current_step = int(current_step)
 
         _state = {}
 
@@ -389,7 +388,7 @@ class FormFlow:
 
     def get_response(self, current_step, last_input, msisdn, session_id, ussd_string, lang):
         if current_step is None:
-            current_step = 0
+            current_step = 1
 
         _resp, state, valid = self._response(
             current_step=current_step,
@@ -715,7 +714,7 @@ class NavigationController(BaseUSSD):
                 self.session_id,
                 self.ussd_string,
                 lang=lang,
-                step=r.hget(self.redis_key, 'FORM_STEP')
+                step=step
             )
 
             if valid_input is not None and not valid_input:
